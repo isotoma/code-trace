@@ -4,7 +4,7 @@ Send [Claude Code](https://docs.anthropic.com/en/docs/claude-code) session trace
 
 Runs as a Claude Code [Stop hook](https://docs.anthropic.com/en/docs/claude-code/hooks) — after each assistant response, it reads the session transcript, assembles conversational turns, and sends them to Langfuse as structured traces with generations and tool spans.
 
-Written in Rust for fast startup and zero runtime dependencies. The HTTP request is fire-and-forget (spawns `curl` in the background), so the hook adds minimal latency to your workflow.
+Written in Rust for fast startup and zero runtime dependencies. The process forks after assembling the payload — the parent exits immediately while the child sends the HTTP request in the background, adding minimal latency to your workflow.
 
 ## What you get in Langfuse
 
@@ -107,7 +107,7 @@ The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_
 2. The binary reads new lines from the transcript JSONL file (tracking offset in `~/.claude/state/code_trace_state.json`)
 3. Messages are grouped into turns (user message + assistant responses + tool results)
 4. A batch of Langfuse ingestion events is built (`trace-create`, `generation-create`, `span-create`)
-5. The batch is sent via a background `curl` process — the hook exits immediately without waiting
+5. The process forks — the parent exits immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
 
 ## Logs
 
