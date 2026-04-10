@@ -1,3 +1,4 @@
+mod emit;
 mod log;
 mod payload;
 mod state;
