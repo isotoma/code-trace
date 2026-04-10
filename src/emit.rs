@@ -185,48 +185,71 @@ pub struct LangfuseConfig {
     pub secret_key: String,
 }
 
-/// Fire-and-forget: spawn a detached child process that sends the HTTP request.
-/// The parent returns immediately.
+/// Fire-and-forget: fork the process. Parent returns immediately,
+/// child sends the HTTP request via reqwest and exits.
 pub fn send_batch_fire_and_forget(config: &LangfuseConfig, events: Vec<Value>) {
     let url = format!("{}/api/public/ingestion", config.host);
+
+    log::info(&format!(
+        "Sending {} events to {} (public_key={}...)",
+        events.len(),
+        url,
+        &config.public_key[..config.public_key.len().min(12)]
+    ));
+
+    // Fork: parent returns, child does the HTTP call
+    #[cfg(unix)]
+    {
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => {
+                log::error("fork() failed");
+            }
+            0 => {
+                // Child process — detach from parent's session
+                unsafe { libc::setsid() };
+                send_batch_blocking(config, &url, events);
+                std::process::exit(0);
+            }
+            _ => {
+                // Parent — return immediately
+                log::debug(&format!("Forked child pid {pid} for HTTP send"));
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Fallback: blocking send in the same process
+        send_batch_blocking(config, &url, events);
+    }
+}
+
+fn send_batch_blocking(config: &LangfuseConfig, url: &str, events: Vec<Value>) {
     let body = json!({
         "batch": events,
         "metadata": {}
     });
-    let body_str = match serde_json::to_string(&body) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error(&format!("Failed to serialize batch: {e}"));
-            return;
-        }
-    };
 
-    let auth = format!("{}:{}", config.public_key, config.secret_key);
-    match std::process::Command::new("curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-X",
-            "POST",
-            &url,
-            "-H",
-            "Content-Type: application/json",
-            "-u",
-            &auth,
-            "-d",
-            &body_str,
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+    let client = reqwest::blocking::Client::new();
+    match client
+        .post(url)
+        .basic_auth(&config.public_key, Some(&config.secret_key))
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
     {
-        Ok(_child) => {
-            log::debug("Spawned curl for fire-and-forget send");
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            if status.is_success() {
+                log::info(&format!("Langfuse API: {status} {text}"));
+            } else {
+                log::error(&format!("Langfuse API error: {status} {text}"));
+            }
         }
         Err(e) => {
-            log::error(&format!("Failed to spawn curl: {e}"));
+            log::error(&format!("Langfuse HTTP request failed: {e}"));
         }
     }
 }
