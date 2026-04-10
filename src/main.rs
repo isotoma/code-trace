@@ -1,11 +1,4 @@
-mod emit;
-mod log;
-mod payload;
-mod state;
-mod tags;
-mod transcript;
-mod turns;
-
+use code_trace::{emit, log, payload, state, tags, transcript, turns};
 use std::time::Instant;
 
 fn run() -> i32 {
