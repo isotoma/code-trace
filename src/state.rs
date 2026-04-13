@@ -65,9 +65,31 @@ pub struct SessionState {
     pub buffer: String,
     #[serde(default)]
     pub turn_count: u32,
+    #[serde(default)]
+    pub updated_epoch: u64,
 }
 
 pub type GlobalState = HashMap<String, SessionState>;
+
+const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
+
+/// Remove sessions older than 7 days.
+pub fn prune_old_sessions(state: &mut GlobalState) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    state.retain(|_, ss| {
+        ss.updated_epoch == 0 || now.saturating_sub(ss.updated_epoch) < MAX_AGE_SECS
+    });
+}
+
+pub fn touch(ss: &mut SessionState) {
+    ss.updated_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+}
 
 pub fn state_key(session_id: &str, transcript_path: &str) -> String {
     let mut hasher = Sha256::new();

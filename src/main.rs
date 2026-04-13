@@ -62,6 +62,7 @@ fn run() -> i32 {
     // Lock, load state, read new messages, build turns, emit
     let _lock = state::FileLock::acquire();
     let mut global_state = state::load_state();
+    state::prune_old_sessions(&mut global_state);
     let key = state::state_key(&session_id, &transcript_path.to_string_lossy());
     let mut ss = global_state
         .get(&key)
@@ -94,6 +95,7 @@ fn run() -> i32 {
     }
 
     ss.turn_count += emitted;
+    state::touch(&mut ss);
     global_state.insert(key, ss);
     state::save_state(&global_state);
 

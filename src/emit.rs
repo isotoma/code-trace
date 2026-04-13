@@ -186,16 +186,9 @@ pub struct LangfuseConfig {
 }
 
 /// Fire-and-forget: fork the process. Parent returns immediately,
-/// child sends the HTTP request via reqwest and exits.
+/// child sends the HTTP request via ureq and exits.
 pub fn send_batch_fire_and_forget(config: &LangfuseConfig, events: Vec<Value>) {
     let url = format!("{}/api/public/ingestion", config.host);
-
-    log::info(&format!(
-        "Sending {} events to {} (public_key={}...)",
-        events.len(),
-        url,
-        &config.public_key[..config.public_key.len().min(12)]
-    ));
 
     // Fork: parent returns, child does the HTTP call
     #[cfg(unix)]
@@ -213,7 +206,6 @@ pub fn send_batch_fire_and_forget(config: &LangfuseConfig, events: Vec<Value>) {
             }
             _ => {
                 // Parent — return immediately
-                log::debug(&format!("Forked child pid {pid} for HTTP send"));
             }
         }
     }
@@ -226,25 +218,26 @@ pub fn send_batch_fire_and_forget(config: &LangfuseConfig, events: Vec<Value>) {
 }
 
 fn send_batch_blocking(config: &LangfuseConfig, url: &str, events: Vec<Value>) {
+    use base64::Engine;
+
     let body = json!({
         "batch": events,
         "metadata": {}
     });
 
-    let client = reqwest::blocking::Client::new();
-    match client
-        .post(url)
-        .basic_auth(&config.public_key, Some(&config.secret_key))
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
+    let credentials = base64::engine::general_purpose::STANDARD
+        .encode(format!("{}:{}", config.public_key, config.secret_key));
+
+    match ureq::post(url)
+        .header("Authorization", &format!("Basic {credentials}"))
+        .send_json(&body)
     {
         Ok(resp) => {
-            let status = resp.status();
-            let text = resp.text().unwrap_or_default();
-            if status.is_success() {
-                log::info(&format!("Langfuse API: {status} {text}"));
+            let status = resp.status().as_u16();
+            if status >= 200 && status < 300 {
+                log::debug(&format!("Langfuse API: {status}"));
             } else {
+                let text = resp.into_body().read_to_string().unwrap_or_default();
                 log::error(&format!("Langfuse API error: {status} {text}"));
             }
         }
