@@ -234,7 +234,7 @@ fn send_batch_blocking(config: &LangfuseConfig, url: &str, events: Vec<Value>) {
     {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            if status >= 200 && status < 300 {
+            if (200..300).contains(&status) {
                 log::debug(&format!("Langfuse API: {status}"));
             } else {
                 let text = resp.into_body().read_to_string().unwrap_or_default();
