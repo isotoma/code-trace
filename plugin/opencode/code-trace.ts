@@ -52,7 +52,7 @@ function getOpencodeVersion(): string | undefined {
   }
 }
 
-export const CodeTracePlugin = async (ctx: {
+async function CodeTracePlugin(ctx: {
   project?: unknown;
   client: {
     session: {
@@ -73,8 +73,6 @@ export const CodeTracePlugin = async (ctx: {
   return {
     event: async (event: { type: string; properties?: Record<string, unknown> }) => {
       if (event.type !== "session.idle") return;
-
-      if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") return;
 
       const sessionId = event.properties?.sessionID as string | undefined;
       if (!sessionId) {
@@ -151,4 +149,6 @@ export const CodeTracePlugin = async (ctx: {
       saveCursor(cursor);
     },
   };
-};
+}
+
+export default { server: CodeTracePlugin };
