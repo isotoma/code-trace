@@ -6,6 +6,7 @@ BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
+PI_EXTENSION_DIR="${HOME}/.pi/agent/extensions"
 
 # Parse flags
 INSTALL_OPENCODE=false
@@ -13,8 +14,17 @@ if [ "${1:-}" = "--opencode" ] || [ "${1:-}" = "-o" ]; then
   INSTALL_OPENCODE=true
 fi
 
+INSTALL_PI=false
+if [ "${1:-}" = "--pi" ] || [ "${1:-}" = "-p" ]; then
+  INSTALL_PI=true
+fi
+
 detect_opencode() {
   [ -d "${HOME}/.config/opencode" ] || [ -f "${HOME}/.config/opencode/opencode.json" ]
+}
+
+detect_pi() {
+  [ -d "${HOME}/.pi/agent" ]
 }
 
 # Detect platform
@@ -85,6 +95,13 @@ elif [ -f "${SCRIPT_DIR}/../plugin/code-trace.ts" ]; then
   PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin" && pwd)/code-trace.ts"
 fi
 
+PI_PLUGIN_SRC=""
+if [ -f "${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts" ]; then
+  PI_PLUGIN_SRC="${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts"
+elif [ -f "${SCRIPT_DIR}/../plugin/pi-agent/code-trace.ts" ]; then
+  PI_PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/pi-agent" && pwd)/code-trace.ts"
+fi
+
 # Register Claude Code hook
 HOOK_ENTRY='{"type":"command","command":"code-trace"}'
 
@@ -149,6 +166,20 @@ install_opencode_plugin() {
   echo "Installed OpenCode plugin to ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
 }
 
+# Install Pi Agent extension
+install_pi_extension() {
+  if [ -z "${PI_PLUGIN_SRC}" ] || [ ! -f "${PI_PLUGIN_SRC}" ]; then
+    echo ""
+    echo "Note: Pi extension source not found at ${PI_PLUGIN_SRC}. Skipping Pi Agent extension install."
+    echo "You can manually copy plugin/pi-agent/code-trace.ts to ${PI_EXTENSION_DIR}/"
+    return
+  fi
+
+  mkdir -p "${PI_EXTENSION_DIR}"
+  cp "${PI_PLUGIN_SRC}" "${PI_EXTENSION_DIR}/code-trace.ts"
+  echo "Installed Pi Agent extension to ${PI_EXTENSION_DIR}/code-trace.ts"
+}
+
 if [ "${INSTALL_OPENCODE}" = true ]; then
   install_opencode_plugin
 elif detect_opencode; then
@@ -162,9 +193,22 @@ elif detect_opencode; then
   fi
 fi
 
+if [ "${INSTALL_PI}" = true ]; then
+  install_pi_extension
+elif detect_pi; then
+  echo ""
+  echo "Pi Agent detected. Install the code-trace extension?"
+  echo "  ${PI_EXTENSION_DIR}/code-trace.ts"
+  echo ""
+  read -p "Install Pi Agent extension? [y/N] " -r
+  if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
+    install_pi_extension
+  fi
+fi
+
 echo ""
 echo "Done! To enable tracing, add to your project's .claude/settings.local.json (Claude Code)"
-echo "or set environment variables for OpenCode:"
+echo "or set environment variables for OpenCode and Pi Agent:"
 echo ""
 cat << 'EOF'
 {
@@ -176,4 +220,4 @@ cat << 'EOF'
 }
 EOF
 echo ""
-echo "For OpenCode, set these environment variables in your shell profile."
+echo "For OpenCode and Pi Agent extensions, set these environment variables in your shell profile."
