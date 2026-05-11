@@ -52,7 +52,7 @@ function getOpencodeVersion(): string | undefined {
   }
 }
 
-export const CodeTracePlugin = async (ctx: {
+export default async function CodeTracePlugin(ctx: {
   project?: unknown;
   client: {
     session: {
@@ -149,4 +149,4 @@ export const CodeTracePlugin = async (ctx: {
       saveCursor(cursor);
     },
   };
-};
+}
