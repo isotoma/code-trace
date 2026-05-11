@@ -1,8 +1,8 @@
 # code-trace
 
-Send [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [OpenCode](https://opencode.ai) session traces to [Langfuse](https://langfuse.com) for observability.
+Send [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenCode](https://opencode.ai), or [Pi](https://github.com/earendil-works/pi) session traces to [Langfuse](https://langfuse.com) for observability.
 
-Runs as a Claude Code [Stop hook](https://docs.anthropic.com/en/docs/claude-code/hooks) or an OpenCode plugin — after each assistant response, it reads the session transcript, assembles conversational turns, and sends them to Langfuse as structured traces with generations and tool spans.
+Runs as a Claude Code [Stop hook](https://docs.anthropic.com/en/docs/claude-code/hooks), an OpenCode plugin, or a Pi extension — after each assistant response, it assembles conversational turns and sends them to Langfuse as structured traces with generations and tool spans.
 
 Written in Rust for fast startup and zero runtime dependencies. The process forks after assembling the payload — the parent exits immediately while the child sends the HTTP request in the background, adding minimal latency to your workflow.
 
@@ -11,7 +11,8 @@ Written in Rust for fast startup and zero runtime dependencies. The process fork
 | Agent | Integration |
 |-------|-------------|
 | Claude Code | Stop hook (settings.json) |
-| OpenCode | Plugin (`.opencode/plugins/` or npm) |
+| OpenCode | Plugin (`~/.config/opencode/plugins/`) |
+| Pi | Extension (`~/.pi/agent/extensions/`) |
 
 ## What you get in Langfuse
 
@@ -32,6 +33,7 @@ Traces are automatically tagged with:
 | `os:<platform>` | `os:linux` |
 | `cc-version:<ver>` | `cc-version:2.1.100 (Claude Code)` |
 | `oc-version:<ver>` | `oc-version:0.4.5 (OpenCode)` |
+| `pi-version:<ver>` | `pi-version:1.2.0 (Pi)` |
 
 ## Install
 
@@ -47,6 +49,12 @@ To also install the OpenCode plugin:
 
 ```bash
 curl -sfL https://raw.githubusercontent.com/isotoma/code-trace/main/install.sh | bash -s -- --opencode
+```
+
+To also install the Pi extension:
+
+```bash
+curl -sfL https://raw.githubusercontent.com/isotoma/code-trace/main/install.sh | bash -s -- --pi
 ```
 
 ### From source
@@ -135,6 +143,30 @@ export LANGFUSE_SECRET_KEY=sk-lf-...
 export LANGFUSE_BASE_URL=https://cloud.langfuse.com  # optional, defaults to cloud.langfuse.com
 ```
 
+### Pi
+
+#### 1. Install the extension
+
+Copy `plugin/pi-agent/code-trace.ts` to your Pi extensions directory:
+
+```bash
+mkdir -p ~/.pi/agent/extensions/
+cp plugin/pi-agent/code-trace.ts ~/.pi/agent/extensions/code-trace.ts
+```
+
+Or use the install script with `--pi` (see above).
+
+#### 2. Set environment variables
+
+Enable tracing in your shell profile (`.bashrc`, `.zshrc`, etc.):
+
+```bash
+export TRACE_TO_LANGFUSE=true
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+export LANGFUSE_BASE_URL=https://cloud.langfuse.com  # optional
+```
+
 ## Environment variables
 
 | Variable | Required | Description |
@@ -164,12 +196,20 @@ The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_
 3. Messages are assembled into turns and piped to the `code-trace` binary over stdin
 4. The binary forks — the parent returns immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
 
+### Pi
+
+1. The Pi extension hooks into the `agent_end` event after each user prompt completes
+2. It reads new session entries since the last processed entry (tracked per-session in `~/.local/share/code-trace/pi_agent_cursor.json`)
+3. Entries are piped to the `code-trace` binary over stdin
+4. The binary normalises Pi's session entry format into turns and forks — the parent returns immediately, while the child sends the batch to Langfuse
+
 ## State and logs
 
 State is stored in `~/.local/share/code-trace/`:
 - `state.json` — turn cursor per session
 - `state.lock` — file lock for concurrent access
 - `opencode_cursor.json` — OpenCode per-session message cursor
+- `pi_agent_cursor.json` — Pi per-session entry cursor
 - `code_trace.log` — trace log
 
 Note: State was previously stored in `~/.claude/state/`. On first run, existing state is migrated automatically.
