@@ -48,6 +48,7 @@ fn run() -> i32 {
     let cwd = input.cwd().map(String::from);
     let env_tags = tags::gather_env_tags(source, cwd.as_deref(), input.agent_version());
 
+
     let _lock = state::FileLock::acquire();
     let mut global_state = state::load_state();
     state::prune_old_sessions(&mut global_state);
