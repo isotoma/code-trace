@@ -133,4 +133,4 @@ async function CodeTracePlugin(ctx: any) {
   };
 }
 
-export default { server: CodeTracePlugin };
+export default { id: "code-trace", server: CodeTracePlugin };
