@@ -1,6 +1,8 @@
 pub mod emit;
 pub mod log;
+pub mod opencode;
 pub mod payload;
+pub mod source;
 pub mod state;
 pub mod tags;
 pub mod transcript;

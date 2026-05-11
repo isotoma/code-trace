@@ -8,17 +8,21 @@ use std::path::PathBuf;
 use crate::log;
 
 fn state_dir() -> Option<PathBuf> {
-    let dir = dirs::home_dir()?.join(".claude").join("state");
+    let dir = dirs::data_local_dir()?.join("code-trace");
     fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
 
+fn old_state_file() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join("state").join("code_trace_state.json"))
+}
+
 fn state_file() -> Option<PathBuf> {
-    Some(state_dir()?.join("code_trace_state.json"))
+    Some(state_dir()?.join("state.json"))
 }
 
 fn lock_file() -> Option<PathBuf> {
-    Some(state_dir()?.join("code_trace_state.lock"))
+    Some(state_dir()?.join("state.lock"))
 }
 
 /// RAII file lock using flock. Best-effort: proceeds without lock on failure.
@@ -91,9 +95,9 @@ pub fn touch(ss: &mut SessionState) {
         .as_secs();
 }
 
-pub fn state_key(session_id: &str, transcript_path: &str) -> String {
+pub fn state_key(source: &str, session_id: &str, handle: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(format!("{session_id}::{transcript_path}"));
+    hasher.update(format!("{source}:{session_id}:{handle}"));
     format!("{:x}", hasher.finalize())
 }
 
@@ -101,14 +105,30 @@ pub fn load_state() -> GlobalState {
     let Some(path) = state_file() else {
         return GlobalState::new();
     };
-    let Ok(mut file) = File::open(&path) else {
-        return GlobalState::new();
-    };
-    let mut buf = String::new();
-    if file.read_to_string(&mut buf).is_err() {
-        return GlobalState::new();
+    if path.exists() {
+        let Ok(mut file) = File::open(&path) else {
+            return GlobalState::new();
+        };
+        let mut buf = String::new();
+        if file.read_to_string(&mut buf).is_err() {
+            return GlobalState::new();
+        }
+        return serde_json::from_str(&buf).unwrap_or_default();
     }
-    serde_json::from_str(&buf).unwrap_or_default()
+    if let Some(old_path) = old_state_file() {
+        if old_path.exists() {
+            if let Ok(mut file) = File::open(&old_path) {
+                let mut buf = String::new();
+                if file.read_to_string(&mut buf).is_ok() {
+                    if let Ok(state) = serde_json::from_str::<GlobalState>(&buf) {
+                        save_state(&state);
+                        return state;
+                    }
+                }
+            }
+        }
+    }
+    GlobalState::new()
 }
 
 pub fn save_state(state: &GlobalState) {
@@ -130,16 +150,23 @@ mod tests {
 
     #[test]
     fn state_key_is_deterministic() {
-        let k1 = state_key("sess1", "/tmp/t.jsonl");
-        let k2 = state_key("sess1", "/tmp/t.jsonl");
+        let k1 = state_key("claude-code", "sess1", "/tmp/t.jsonl");
+        let k2 = state_key("claude-code", "sess1", "/tmp/t.jsonl");
         assert_eq!(k1, k2);
         assert_eq!(k1.len(), 64); // sha256 hex
     }
 
     #[test]
     fn state_key_differs_for_different_inputs() {
-        let k1 = state_key("sess1", "/tmp/a.jsonl");
-        let k2 = state_key("sess1", "/tmp/b.jsonl");
+        let k1 = state_key("claude-code", "sess1", "/tmp/a.jsonl");
+        let k2 = state_key("claude-code", "sess1", "/tmp/b.jsonl");
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn state_key_differs_for_different_sources() {
+        let k1 = state_key("claude-code", "sess1", "/tmp/t.jsonl");
+        let k2 = state_key("opencode", "sess1", "/tmp/t.jsonl");
         assert_ne!(k1, k2);
     }
 

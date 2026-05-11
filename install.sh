@@ -5,6 +5,17 @@ REPO="isotoma/code-trace"
 BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
+OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
+
+# Parse flags
+INSTALL_OPENCODE=false
+if [ "${1:-}" = "--opencode" ] || [ "${1:-}" = "-o" ]; then
+  INSTALL_OPENCODE=true
+fi
+
+detect_opencode() {
+  [ -d "${HOME}/.config/opencode" ] || [ -f "${HOME}/.config/opencode/opencode.json" ]
+}
 
 # Detect platform
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -65,15 +76,22 @@ if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${INSTALL_DIR}"; then
   fi
 fi
 
-# Register the Claude Code hook
+# Determine plugin source location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_SRC=""
+if [ -f "${SCRIPT_DIR}/plugin/code-trace.ts" ]; then
+  PLUGIN_SRC="${SCRIPT_DIR}/plugin/code-trace.ts"
+elif [ -f "${SCRIPT_DIR}/../plugin/code-trace.ts" ]; then
+  PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin" && pwd)/code-trace.ts"
+fi
+
+# Register Claude Code hook
 HOOK_ENTRY='{"type":"command","command":"code-trace"}'
 
 if [ -f "${SETTINGS_FILE}" ]; then
-  # Check if code-trace hook is already registered
   if grep -q "code-trace" "${SETTINGS_FILE}"; then
     echo "Hook already registered in ${SETTINGS_FILE}"
   else
-    # Merge the hook into existing settings using python (available on macOS and most Linux)
     python3 -c "
 import json, sys
 
@@ -84,7 +102,6 @@ hook = {'type': 'command', 'command': 'code-trace'}
 hooks = settings.setdefault('hooks', {})
 stop = hooks.setdefault('Stop', [])
 
-# Find or create the hooks list entry
 for entry in stop:
     if 'hooks' in entry:
         entry['hooks'].append(hook)
@@ -118,8 +135,36 @@ EOF
   echo "Created ${SETTINGS_FILE} with hook"
 fi
 
+# Install OpenCode plugin
+install_opencode_plugin() {
+  if [ -z "${PLUGIN_SRC}" ] || [ ! -f "${PLUGIN_SRC}" ]; then
+    echo ""
+    echo "Note: Plugin source not found at ${PLUGIN_SRC}. Skipping OpenCode plugin install."
+    echo "You can manually copy plugin/code-trace.ts to ${OPENCODE_PLUGIN_DIR}/"
+    return
+  fi
+
+  mkdir -p "${OPENCODE_PLUGIN_DIR}"
+  cp "${PLUGIN_SRC}" "${OPENCODE_PLUGIN_DIR}/code-trace.ts"
+  echo "Installed OpenCode plugin to ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
+}
+
+if [ "${INSTALL_OPENCODE}" = true ]; then
+  install_opencode_plugin
+elif detect_opencode; then
+  echo ""
+  echo "OpenCode detected. Install the code-trace plugin?"
+  echo "  ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
+  echo ""
+  read -p "Install OpenCode plugin? [y/N] " -r
+  if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
+    install_opencode_plugin
+  fi
+fi
+
 echo ""
-echo "Done! To enable tracing, add to your project's .claude/settings.local.json:"
+echo "Done! To enable tracing, add to your project's .claude/settings.local.json (Claude Code)"
+echo "or set environment variables for OpenCode:"
 echo ""
 cat << 'EOF'
 {
@@ -130,3 +175,5 @@ cat << 'EOF'
   }
 }
 EOF
+echo ""
+echo "For OpenCode, set these environment variables in your shell profile."
