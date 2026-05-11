@@ -2,22 +2,25 @@ This project sends Claude Code and OpenCode session traces to Langfuse for obser
 
 ## Architecture
 
-- Single Rust binary that supports two input sources
+- Single Rust binary that supports three input sources
 - Claude Code: invoked as a Stop hook, reads transcript JSONL
 - OpenCode: invoked by a TypeScript plugin, receives messages via stdin
+- Pi: invoked by a TypeScript extension, receives session entries via stdin
 
 ## Key files
 
 - `src/main.rs` — entry point, dispatches on `Input` enum
-- `src/source.rs` — `Source` enum (ClaudeCode | Opencode)
+- `src/source.rs` — `Source` enum (ClaudeCode | Opencode | PiAgent)
 - `src/payload.rs` — parses stdin into `Input` enum
 - `src/opencode.rs` — normalizes OpenCode SDK message format to Claude-format Values
+- `src/pi_agent.rs` — normalizes Pi session entry format to Claude-format Values
 - `src/transcript.rs` — reads Claude Code JSONL transcript
 - `src/turns.rs` — groups messages into user/assistant/tool turns
 - `src/emit.rs` — builds Langfuse ingestion batch
 - `src/tags.rs` — gathers env tags (repo, branch, user, host, os, agent version)
 - `src/state.rs` — persisted cursor state per session
 - `src/log.rs` — logging to `~/.local/share/code-trace/`
+- `plugin/pi-agent/code-trace.ts` — pi extension
 
 ## State location
 
