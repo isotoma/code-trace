@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="isotoma/code-trace"
 BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
 PI_EXTENSION_DIR="${HOME}/.pi/agent/extensions"
@@ -58,15 +59,25 @@ DOWNLOAD_URL="$(curl -sfL "https://api.github.com/repos/${REPO}/releases/latest"
   | cut -d '"' -f 4)"
 
 if [ -z "${DOWNLOAD_URL}" ]; then
-  echo "Could not find release asset for ${ASSET}" >&2
-  exit 1
+  LOCAL_BIN="${SCRIPT_DIR}/target/release/${BINARY}"
+  if [ -f "${LOCAL_BIN}" ]; then
+    echo "No release found; using local build: ${LOCAL_BIN}"
+    mkdir -p "${INSTALL_DIR}"
+    cp "${LOCAL_BIN}" "${INSTALL_DIR}/${BINARY}"
+    chmod +x "${INSTALL_DIR}/${BINARY}"
+    echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+  else
+    echo "Could not find release asset for ${ASSET} and no local build found." >&2
+    echo "Run 'cargo build --release' first, or check that the repo has a published release." >&2
+    exit 1
+  fi
+else
+  echo "Downloading ${BINARY} for ${TARGET}..."
+  mkdir -p "${INSTALL_DIR}"
+  curl -sfL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/${BINARY}"
+  chmod +x "${INSTALL_DIR}/${BINARY}"
+  echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
 fi
-
-echo "Downloading ${BINARY} for ${TARGET}..."
-mkdir -p "${INSTALL_DIR}"
-curl -sfL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/${BINARY}"
-chmod +x "${INSTALL_DIR}/${BINARY}"
-echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
 
 # Add ~/.local/bin to PATH if not already present
 if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${INSTALL_DIR}"; then
@@ -87,7 +98,6 @@ if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${INSTALL_DIR}"; then
 fi
 
 # Determine plugin source location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_SRC=""
 if [ -f "${SCRIPT_DIR}/plugin/opencode/code-trace.ts" ]; then
   PLUGIN_SRC="${SCRIPT_DIR}/plugin/opencode/code-trace.ts"
