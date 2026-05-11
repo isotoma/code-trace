@@ -53,16 +53,17 @@ function getOpencodeVersion(): string | undefined {
 
 async function CodeTracePlugin(ctx: any) {
   return {
-    event: async (event: any) => {
+    event: async (input: any) => {
+      const event = input.event ?? input;
       if (event.type !== "session.idle") return;
 
-      const sessionId = event.properties?.sessionID as string | undefined;
+      const sessionId = event.sessionID ?? event.properties?.sessionID;
       if (!sessionId) {
         await ctx.client.app.log({
           body: {
             service: "code-trace",
             level: "warn",
-            message: "session.idle event missing sessionID",
+            message: `session.idle event missing sessionID, keys: ${Object.keys(event).join(",")}`,
           },
         });
         return;
