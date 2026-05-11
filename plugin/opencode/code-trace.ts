@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 interface CursorEntry {
   lastIndex: number;
@@ -52,26 +51,9 @@ function getOpencodeVersion(): string | undefined {
   }
 }
 
-async function CodeTracePlugin(ctx: {
-  project?: unknown;
-  client: {
-    session: {
-      messages: (opts: { path: { id: string } }) => Promise<{
-        data: Array<{ info: { id: string; role: string; model?: string }; parts: unknown[] }>;
-      }>;
-    };
-    app: {
-      log: (opts: { body: { service: string; level: string; message: string; extra?: unknown } }) => Promise<boolean>;
-    };
-  };
-  directory: string;
-  worktree: string;
-  $: {
-    command: (cmd: string, args?: string[]) => { stdout: { text: () => string } };
-  };
-}) => {
+async function CodeTracePlugin(ctx: any) {
   return {
-    event: async (event: { type: string; properties?: Record<string, unknown> }) => {
+    event: async (event: any) => {
       if (event.type !== "session.idle") return;
 
       const sessionId = event.properties?.sessionID as string | undefined;
