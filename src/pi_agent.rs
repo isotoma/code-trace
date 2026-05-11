@@ -231,6 +231,8 @@ mod tests {
 
     #[test]
     fn tool_result_attached_to_previous_assistant() {
+        // toolResult entries are not emitted as separate messages; they are
+        // attached to the previous assistant message's tool_results field.
         let msgs = vec![
             json!({
                 "role": "assistant",
@@ -249,7 +251,8 @@ mod tests {
             }),
         ];
         let out = normalize_pi_agent_messages(msgs);
-        assert_eq!(out.len(), 2);
+        // toolResult is attached to the assistant message, not a separate entry
+        assert_eq!(out.len(), 1);
         let tool_results = out[0]["message"]["tool_results"].as_array().unwrap();
         assert_eq!(tool_results.len(), 1);
         assert_eq!(tool_results[0]["tool_use_id"], "tc1");
