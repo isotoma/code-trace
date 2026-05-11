@@ -115,7 +115,6 @@ async function CodeTracePlugin(ctx: any) {
         });
 
         child.stdin?.end(JSON.stringify(payload), "utf-8");
-        child.stdin?.destroy();
         child.unref();
       } catch (err) {
         await ctx.client.app.log({

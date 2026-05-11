@@ -79,7 +79,6 @@ export default function (pi: any) {
     });
 
     child.stdin?.end(JSON.stringify(payload), "utf-8");
-    child.stdin?.destroy();
     child.unref();
 
     cursor[sessionId] = { lastIndex: allEntries.length };
