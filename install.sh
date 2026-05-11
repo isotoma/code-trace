@@ -56,7 +56,7 @@ ASSET="${BINARY}-${TARGET}"
 DOWNLOAD_URL="$(curl -sfL "https://api.github.com/repos/${REPO}/releases/latest" \
   | grep "browser_download_url.*${ASSET}" \
   | head -1 \
-  | cut -d '"' -f 4)"
+  | cut -d '"' -f 4 || true)"
 
 if [ -z "${DOWNLOAD_URL}" ]; then
   LOCAL_BIN="${SCRIPT_DIR}/target/release/${BINARY}"
