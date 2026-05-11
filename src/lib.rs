@@ -1,3 +1,4 @@
+pub mod config;
 pub mod emit;
 pub mod log;
 pub mod opencode;
