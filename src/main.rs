@@ -1,7 +1,14 @@
-use code_trace::{emit, log, opencode, payload, pi_agent, state, tags, transcript, turns};
+use code_trace::{config, emit, log, opencode, payload, pi_agent, state, tags, transcript, turns};
 use std::time::Instant;
 
 fn run() -> i32 {
+    let file_config = config::load_config();
+    for (k, v) in &file_config {
+        if std::env::var(k).is_err() {
+            std::env::set_var(k, v);
+        }
+    }
+
     let start = Instant::now();
     log::debug("code-trace started");
 
