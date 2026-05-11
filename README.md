@@ -124,14 +124,6 @@ mkdir -p ~/.config/opencode/plugins/
 cp plugin/opencode/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
 ```
 
-Or add to your `opencode.json`:
-
-```json
-{
-  "plugin": ["code-trace"]
-}
-```
-
 #### 2. Set environment variables
 
 Enable tracing in your shell profile (`.bashrc`, `.zshrc`, etc.):
