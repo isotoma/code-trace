@@ -1,4 +1,4 @@
-use code_trace::{emit, log, opencode, payload, state, tags, transcript, turns};
+use code_trace::{emit, log, opencode, payload, pi_agent, state, tags, transcript, turns};
 use std::time::Instant;
 
 fn run() -> i32 {
@@ -154,6 +154,57 @@ fn run() -> i32 {
                     turn_num,
                     t,
                     std::path::Path::new("opencode"),
+                    &env_tags,
+                    source,
+                );
+                all_events.extend(events);
+            }
+
+            ss.turn_count += emitted;
+            state::touch(&mut ss);
+            global_state.insert(key, ss);
+            state::save_state(&global_state);
+
+            emit::send_batch_fire_and_forget(&config, all_events);
+
+            let dur = start.elapsed();
+            log::info(&format!(
+                "Processed {emitted} turns in {:.2}s (session={session_id})",
+                dur.as_secs_f64()
+            ));
+        }
+
+        payload::Input::PiAgent {
+            session_id: _,
+            cwd: _,
+            messages,
+            agent_version: _,
+        } => {
+            if messages.is_empty() {
+                return 0;
+            }
+
+            let key = state::state_key(source.as_str(), &session_id, &session_id);
+            let mut ss = global_state.get(&key).cloned().unwrap_or_default();
+
+            let normalized = pi_agent::normalize_pi_agent_messages(messages);
+            let built_turns = turns::build_turns(normalized);
+            if built_turns.is_empty() {
+                global_state.insert(key, ss);
+                state::save_state(&global_state);
+                return 0;
+            }
+
+            let mut all_events = Vec::new();
+            let mut emitted = 0u32;
+            for t in &built_turns {
+                emitted += 1;
+                let turn_num = ss.turn_count + emitted;
+                let events = emit::build_ingestion_batch(
+                    &session_id,
+                    turn_num,
+                    t,
+                    std::path::Path::new("pi-agent"),
                     &env_tags,
                     source,
                 );

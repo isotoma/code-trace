@@ -21,6 +21,12 @@ pub enum Input {
         messages: Vec<Value>,
         agent_version: Option<String>,
     },
+    PiAgent {
+        session_id: Option<String>,
+        cwd: Option<String>,
+        messages: Vec<Value>,
+        agent_version: Option<String>,
+    },
 }
 
 impl Input {
@@ -28,6 +34,7 @@ impl Input {
         match self {
             Input::ClaudeCode { .. } => Source::ClaudeCode,
             Input::Opencode { .. } => Source::Opencode,
+            Input::PiAgent { .. } => Source::PiAgent,
         }
     }
 
@@ -35,6 +42,7 @@ impl Input {
         match self {
             Input::ClaudeCode { session_id, .. } => session_id.as_deref(),
             Input::Opencode { session_id, .. } => session_id.as_deref(),
+            Input::PiAgent { session_id, .. } => session_id.as_deref(),
         }
     }
 
@@ -42,6 +50,7 @@ impl Input {
         match self {
             Input::ClaudeCode { cwd, .. } => cwd.as_deref(),
             Input::Opencode { cwd, .. } => cwd.as_deref(),
+            Input::PiAgent { cwd, .. } => cwd.as_deref(),
         }
     }
 
@@ -49,6 +58,7 @@ impl Input {
         match self {
             Input::ClaudeCode { .. } => None,
             Input::Opencode { agent_version, .. } => agent_version.as_deref(),
+            Input::PiAgent { agent_version, .. } => agent_version.as_deref(),
         }
     }
 }
@@ -66,7 +76,7 @@ fn parse_by_source(source: &Source, value: &Value) -> Input {
     match source {
         Source::ClaudeCode => parse_claude_code_payload(value),
         Source::Opencode => parse_opencode_payload(value),
-        Source::PiAgent => parse_opencode_payload(value), // placeholder; replaced in next commit
+        Source::PiAgent => parse_pi_agent_payload(value),
     }
 }
 
@@ -122,6 +132,35 @@ fn parse_opencode_payload(value: &Value) -> Input {
         .map(String::from);
 
     Input::Opencode {
+        session_id,
+        cwd,
+        messages,
+        agent_version,
+    }
+}
+
+fn parse_pi_agent_payload(value: &Value) -> Input {
+    let session_id = value
+        .get("sessionId")
+        .or_else(|| value.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let cwd = value.get("cwd").and_then(|v| v.as_str()).map(String::from);
+
+    let messages = value
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let agent_version = value
+        .get("agentVersion")
+        .or_else(|| value.get("agent_version"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    Input::PiAgent {
         session_id,
         cwd,
         messages,
@@ -192,6 +231,25 @@ mod tests {
         match &input {
             Input::Opencode { messages, .. } => assert_eq!(messages.len(), 1),
             _ => panic!("expected Opencode input"),
+        }
+    }
+
+    #[test]
+    fn parses_pi_agent_payload() {
+        let v = json!({
+            "source": "pi-agent",
+            "sessionId": "ses_456",
+            "cwd": "/home/user/project",
+            "messages": [{"role": "user", "content": "hello"}],
+            "agentVersion": "1.0.0"
+        });
+        let input = parse_payload(&v);
+        assert_eq!(input.source(), Source::PiAgent);
+        assert_eq!(input.session_id(), Some("ses_456"));
+        assert_eq!(input.agent_version(), Some("1.0.0"));
+        match &input {
+            Input::PiAgent { messages, .. } => assert_eq!(messages.len(), 1),
+            _ => panic!("expected PiAgent input"),
         }
     }
 
