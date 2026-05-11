@@ -79,6 +79,18 @@ pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<
         }
     }
 
+    // Pi Agent version probe (only for PiAgent source, if no version provided)
+    if source == Source::PiAgent && agent_version.is_none() {
+        if let Ok(output) = Command::new("pi").arg("--version").output() {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !ver.is_empty() {
+                    tags.push(format!("pi-version:{ver}"));
+                }
+            }
+        }
+    }
+
     tags
 }
 
@@ -116,5 +128,14 @@ mod tests {
     fn version_from_payload_preferred_over_probe() {
         let tags = gather_env_tags(Source::Opencode, None, Some("1.2.3"));
         assert!(tags.contains(&"oc-version:1.2.3".to_string()));
+    }
+
+    #[test]
+    fn pi_agent_source_uses_pi_agent_tag() {
+        let tags = gather_env_tags(Source::PiAgent, None, Some("1.0.0"));
+        assert!(tags.contains(&"pi-agent".to_string()));
+        assert!(tags.contains(&"pi-version:1.0.0".to_string()));
+        assert!(!tags.iter().any(|t| t.starts_with("cc-version:")));
+        assert!(!tags.iter().any(|t| t.starts_with("oc-version:")));
     }
 }

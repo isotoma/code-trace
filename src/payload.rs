@@ -66,6 +66,7 @@ fn parse_by_source(source: &Source, value: &Value) -> Input {
     match source {
         Source::ClaudeCode => parse_claude_code_payload(value),
         Source::Opencode => parse_opencode_payload(value),
+        Source::PiAgent => parse_opencode_payload(value), // placeholder; replaced in next commit
     }
 }
 
