@@ -103,3 +103,47 @@ fn end_to_end_opencode_transcript() {
     assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
     assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
 }
+
+#[test]
+fn end_to_end_pi_agent_transcript() {
+    let msgs = vec![
+        json!({
+            "role": "user",
+            "content": "list files"
+        }),
+        json!({
+            "role": "assistant",
+            "content": [
+                { "type": "text", "text": "Let me check" },
+                { "type": "toolCall", "id": "tc1", "name": "bash", "arguments": { "command": "ls" } }
+            ],
+            "model": "claude-sonnet-4-5"
+        }),
+        json!({
+            "role": "toolResult",
+            "toolCallId": "tc1",
+            "toolName": "bash",
+            "content": [{ "type": "text", "text": "file1.txt" }],
+            "isError": false
+        }),
+    ];
+
+    let normalized = code_trace::pi_agent::normalize_pi_agent_messages(msgs);
+    let turns = code_trace::turns::build_turns(normalized);
+    assert_eq!(turns.len(), 1);
+
+    let tags = vec!["pi-agent".to_string()];
+    let events = code_trace::emit::build_ingestion_batch(
+        "sess-pi-1",
+        1,
+        &turns[0],
+        std::path::Path::new("pi-agent"),
+        &tags,
+        code_trace::source::Source::PiAgent,
+    );
+
+    assert!(events.len() >= 2);
+    assert_eq!(events[0]["type"], "trace-create");
+    assert!(events[0]["body"]["name"].as_str().unwrap().starts_with("Pi Agent"));
+    assert_eq!(events[0]["body"]["metadata"]["source"], "pi-agent");
+}
