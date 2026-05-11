@@ -66,9 +66,27 @@ cp target/release/code-trace ~/.local/bin/
 
 ## Configuration
 
-### Claude Code
+### Config file (recommended)
 
-#### 1. Register the hook
+Add your credentials to `~/.config/code-trace/config` (created by the install script):
+
+```
+TRACE_TO_LANGFUSE=true
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+# LANGFUSE_BASE_URL=https://cloud.langfuse.com
+# CODE_TRACE_DEBUG=false
+```
+
+This file is read by the binary at startup and works the same regardless of which agent you're using.
+
+Respects `$XDG_CONFIG_HOME`: if set, the file is read from `$XDG_CONFIG_HOME/code-trace/config`.
+
+### Per-agent setup
+
+Each agent also needs the hook/plugin installed so it invokes the binary.
+
+#### Claude Code
 
 The install script does this automatically. If not, add to `~/.claude/settings.json`:
 
@@ -89,53 +107,31 @@ The install script does this automatically. If not, add to `~/.claude/settings.j
 }
 ```
 
-#### 2. Set credentials per project
+#### OpenCode
 
-Add to `.claude/settings.local.json` in your project root:
-
-```json
-{
-  "env": {
-    "TRACE_TO_LANGFUSE": "true",
-    "LANGFUSE_PUBLIC_KEY": "pk-lf-...",
-    "LANGFUSE_SECRET_KEY": "sk-lf-..."
-  }
-}
-```
-
-Or set them globally if you want tracing on all projects.
-
-### OpenCode
-
-#### 1. Install the plugin
-
-Copy `plugin/code-trace.ts` to your OpenCode plugins directory:
+Copy `plugin/opencode/code-trace.ts` to your OpenCode plugins directory:
 
 ```bash
 mkdir -p ~/.config/opencode/plugins/
-cp plugin/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
+cp plugin/opencode/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
 ```
 
-Or add to your `opencode.json`:
+Or use the install script with `--opencode` (see above).
 
-```json
-{
-  "plugin": ["code-trace"]
-}
-```
+#### Pi
 
-#### 2. Set environment variables
-
-Enable tracing in your shell profile (`.bashrc`, `.zshrc`, etc.):
+Copy `plugin/pi-agent/code-trace.ts` to your Pi extensions directory:
 
 ```bash
-export TRACE_TO_LANGFUSE=true
-export LANGFUSE_PUBLIC_KEY=pk-lf-...
-export LANGFUSE_SECRET_KEY=sk-lf-...
-export LANGFUSE_BASE_URL=https://cloud.langfuse.com  # optional, defaults to cloud.langfuse.com
+mkdir -p ~/.pi/agent/extensions/
+cp plugin/pi-agent/code-trace.ts ~/.pi/agent/extensions/code-trace.ts
 ```
 
-## Environment variables
+Or use the install script with `--pi` (see above).
+
+### Environment variable overrides
+
+Environment variables take precedence over the config file. This is useful for per-project credentials or CI environments.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
