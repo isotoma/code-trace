@@ -5,7 +5,7 @@ use std::path::PathBuf;
 const MAX_LOG_BYTES: u64 = 512 * 1024; // 512KB
 
 fn log_dir() -> Option<PathBuf> {
-    let dir = dirs::home_dir()?.join(".claude").join("state");
+    let dir = dirs::data_local_dir()?.join("code-trace");
     fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -42,7 +42,12 @@ pub fn error(msg: &str) {
 }
 
 pub fn debug(msg: &str) {
-    if std::env::var("CC_TRACE_DEBUG").unwrap_or_default().to_lowercase() == "true" {
+    let debug_enabled = std::env::var("CODE_TRACE_DEBUG")
+        .or_else(|_| std::env::var("CC_TRACE_DEBUG"))
+        .unwrap_or_default()
+        .to_lowercase()
+        == "true";
+    if debug_enabled {
         write_log("DEBUG", msg);
     }
 }

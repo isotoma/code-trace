@@ -22,6 +22,7 @@ fn end_to_end_simple_transcript() {
         &turns[0],
         transcript.path(),
         &tags,
+        code_trace::source::Source::ClaudeCode,
     );
 
     assert_eq!(events.len(), 2);
@@ -52,10 +53,53 @@ fn end_to_end_tool_transcript() {
         &turns[0],
         transcript.path(),
         &["claude-code".to_string()],
+        code_trace::source::Source::ClaudeCode,
     );
 
     assert_eq!(events.len(), 3);
     assert_eq!(events[2]["type"], "span-create");
     assert_eq!(events[2]["body"]["name"], "Tool: Bash");
     assert_eq!(events[2]["body"]["output"], json!("README.md"));
+}
+
+#[test]
+fn end_to_end_opencode_transcript() {
+    let msgs = vec![
+        json!({
+            "info": { "id": "msg_1", "role": "user" },
+            "parts": [{ "type": "text", "text": "Hello" }]
+        }),
+        json!({
+            "info": { "id": "msg_2", "role": "assistant", "model": "claude-sonnet-4-20250514" },
+            "parts": [
+                { "type": "text", "text": "Hi there!" },
+                { "type": "tool_use", "id": "tu_1", "name": "Bash", "input": { "command": "ls" } }
+            ]
+        }),
+        json!({
+            "info": { "id": "msg_3", "role": "assistant" },
+            "parts": [
+                { "type": "tool_result", "tool_use_id": "tu_1", "content": "file1.txt" }
+            ]
+        }),
+    ];
+
+    let normalized = code_trace::opencode::normalize_opencode_messages(msgs);
+    let turns = code_trace::turns::build_turns(normalized);
+    assert_eq!(turns.len(), 1);
+
+    let tags = vec!["opencode".to_string()];
+    let events = code_trace::emit::build_ingestion_batch(
+        "oc-session",
+        1,
+        &turns[0],
+        std::path::Path::new("opencode"),
+        &tags,
+        code_trace::source::Source::Opencode,
+    );
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["type"], "trace-create");
+    assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
+    assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
 }

@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use crate::source::Source;
+
 fn git_cmd(args: &[&str], cwd: Option<&str>) -> Option<String> {
     let mut cmd = Command::new("git");
     cmd.args(args);
@@ -19,8 +21,14 @@ fn git_cmd(args: &[&str], cwd: Option<&str>) -> Option<String> {
     }
 }
 
-pub fn gather_env_tags(cwd: Option<&str>) -> Vec<String> {
-    let mut tags = vec!["claude-code".to_string()];
+pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<&str>) -> Vec<String> {
+    let mut tags = vec![source.agent_tag().to_string()];
+
+    if let Some(ver) = agent_version {
+        if !ver.is_empty() {
+            tags.push(format!("{}:{ver}", source.version_tag_prefix()));
+        }
+    }
 
     // Git repo name
     if let Some(toplevel) = git_cmd(&["rev-parse", "--show-toplevel"], cwd) {
@@ -47,12 +55,26 @@ pub fn gather_env_tags(cwd: Option<&str>) -> Vec<String> {
     // OS
     tags.push(format!("os:{}", std::env::consts::OS));
 
-    // Claude Code version
-    if let Ok(output) = Command::new("claude").arg("--version").output() {
-        if output.status.success() {
-            let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !ver.is_empty() {
-                tags.push(format!("cc-version:{ver}"));
+    // Claude Code version probe (only for Claude Code source, if no version provided)
+    if source == Source::ClaudeCode && agent_version.is_none() {
+        if let Ok(output) = Command::new("claude").arg("--version").output() {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !ver.is_empty() {
+                    tags.push(format!("cc-version:{ver}"));
+                }
+            }
+        }
+    }
+
+    // OpenCode version probe (only for OpenCode source, if no version provided)
+    if source == Source::Opencode && agent_version.is_none() {
+        if let Ok(output) = Command::new("opencode").arg("--version").output() {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !ver.is_empty() {
+                    tags.push(format!("oc-version:{ver}"));
+                }
             }
         }
     }
@@ -65,20 +87,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn always_includes_claude_code_tag() {
-        let tags = gather_env_tags(None);
+    fn always_includes_agent_tag() {
+        let tags = gather_env_tags(Source::ClaudeCode, None, None);
         assert!(tags.contains(&"claude-code".to_string()));
     }
 
     #[test]
     fn includes_os_tag() {
-        let tags = gather_env_tags(None);
+        let tags = gather_env_tags(Source::ClaudeCode, None, None);
         assert!(tags.iter().any(|t| t.starts_with("os:")));
     }
 
     #[test]
     fn includes_user_tag() {
-        let tags = gather_env_tags(None);
+        let tags = gather_env_tags(Source::ClaudeCode, None, None);
         assert!(tags.iter().any(|t| t.starts_with("user:")));
+    }
+
+    #[test]
+    fn opencode_source_uses_opencode_tag() {
+        let tags = gather_env_tags(Source::Opencode, None, Some("0.4.5"));
+        assert!(tags.contains(&"opencode".to_string()));
+        assert!(tags.contains(&"oc-version:0.4.5".to_string()));
+        assert!(!tags.iter().any(|t| t.starts_with("cc-version:")));
+    }
+
+    #[test]
+    fn version_from_payload_preferred_over_probe() {
+        let tags = gather_env_tags(Source::Opencode, None, Some("1.2.3"));
+        assert!(tags.contains(&"oc-version:1.2.3".to_string()));
     }
 }

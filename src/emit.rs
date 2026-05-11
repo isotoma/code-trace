@@ -1,4 +1,5 @@
 use crate::log;
+use crate::source::Source;
 use crate::transcript;
 use crate::turns::Turn;
 use serde_json::{json, Value};
@@ -61,6 +62,7 @@ pub fn build_ingestion_batch(
     turn: &Turn,
     transcript_path: &Path,
     tags: &[String],
+    source: Source,
 ) -> Vec<Value> {
     let user_text_raw = transcript::extract_text(transcript::get_content(&turn.user_msg));
     let (user_text, user_text_meta) = truncate(&user_text_raw);
@@ -85,13 +87,13 @@ pub fn build_ingestion_batch(
         "body": {
             "id": trace_id,
             "timestamp": now,
-            "name": format!("Claude Code - Turn {turn_num}"),
+            "name": format!("{} - Turn {turn_num}", source.trace_name_prefix()),
             "sessionId": session_id,
             "input": json!({"role": "user", "content": user_text}),
             "output": json!({"role": "assistant", "content": assistant_text}),
             "tags": tags,
             "metadata": {
-                "source": "claude-code",
+                "source": source.as_str(),
                 "session_id": session_id,
                 "turn_number": turn_num,
                 "transcript_path": transcript_path.to_string_lossy(),
@@ -264,8 +266,9 @@ mod tests {
 
     #[test]
     fn builds_trace_and_generation_events() {
+        use crate::source::Source;
         let turn = make_simple_turn();
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()]);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0]["type"], "trace-create");
         assert_eq!(events[1]["type"], "generation-create");
@@ -273,9 +276,10 @@ mod tests {
 
     #[test]
     fn trace_event_has_tags() {
+        use crate::source::Source;
         let turn = make_simple_turn();
         let tags = vec!["claude-code".to_string(), "repo:myrepo".to_string()];
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &tags);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &tags, Source::ClaudeCode);
         let trace_tags = events[0]["body"]["tags"].as_array().unwrap();
         assert_eq!(trace_tags.len(), 2);
         assert_eq!(trace_tags[0], "claude-code");
@@ -284,6 +288,7 @@ mod tests {
 
     #[test]
     fn builds_tool_spans() {
+        use crate::source::Source;
         let mut tool_results = HashMap::new();
         tool_results.insert("tu_1".to_string(), json!("file1.txt\nfile2.txt"));
         let turn = Turn {
@@ -294,10 +299,19 @@ mod tests {
             ]}})],
             tool_results_by_id: tool_results,
         };
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()]);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
         assert_eq!(events.len(), 3);
         assert_eq!(events[2]["type"], "span-create");
         assert_eq!(events[2]["body"]["name"], "Tool: Bash");
+    }
+
+    #[test]
+    fn opencode_source_uses_correct_trace_name() {
+        use crate::source::Source;
+        let turn = make_simple_turn();
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["opencode".to_string()], Source::Opencode);
+        assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
+        assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
     }
 
     #[test]
