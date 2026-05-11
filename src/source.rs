@@ -5,6 +5,7 @@ pub enum Source {
     #[default]
     ClaudeCode,
     Opencode,
+    PiAgent,
 }
 
 impl Source {
@@ -12,6 +13,7 @@ impl Source {
         match self {
             Source::ClaudeCode => "claude-code",
             Source::Opencode => "opencode",
+            Source::PiAgent => "pi-agent",
         }
     }
 
@@ -19,6 +21,7 @@ impl Source {
         match self {
             Source::ClaudeCode => "cc-version",
             Source::Opencode => "oc-version",
+            Source::PiAgent => "pi-version",
         }
     }
 
@@ -26,6 +29,7 @@ impl Source {
         match self {
             Source::ClaudeCode => "Claude Code",
             Source::Opencode => "OpenCode",
+            Source::PiAgent => "Pi Agent",
         }
     }
 
@@ -33,6 +37,7 @@ impl Source {
         match self {
             Source::ClaudeCode => "claude-code",
             Source::Opencode => "opencode",
+            Source::PiAgent => "pi-agent",
         }
     }
 
@@ -40,9 +45,8 @@ impl Source {
         match s.to_lowercase().as_str() {
             "claude-code" | "claude_code" | "claude" => Some(Source::ClaudeCode),
             "opencode" | "open_code" => Some(Source::Opencode),
+            "pi-agent" | "pi_agent" | "pi" => Some(Source::PiAgent),
             _ => None,
         }
     }
 }
-
-
