@@ -117,11 +117,11 @@ Or set them globally if you want tracing on all projects.
 
 #### 1. Install the plugin
 
-Copy `plugin/code-trace.ts` to your OpenCode plugins directory:
+Copy `plugin/opencode/code-trace.ts` to your OpenCode plugins directory:
 
 ```bash
 mkdir -p ~/.config/opencode/plugins/
-cp plugin/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
+cp plugin/opencode/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
 ```
 
 Or add to your `opencode.json`:
@@ -153,6 +153,7 @@ Copy `plugin/pi-agent/code-trace.ts` to your Pi extensions directory:
 mkdir -p ~/.pi/agent/extensions/
 cp plugin/pi-agent/code-trace.ts ~/.pi/agent/extensions/code-trace.ts
 ```
+
 
 Or use the install script with `--pi` (see above).
 

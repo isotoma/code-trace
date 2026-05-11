@@ -89,10 +89,10 @@ fi
 # Determine plugin source location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_SRC=""
-if [ -f "${SCRIPT_DIR}/plugin/code-trace.ts" ]; then
-  PLUGIN_SRC="${SCRIPT_DIR}/plugin/code-trace.ts"
-elif [ -f "${SCRIPT_DIR}/../plugin/code-trace.ts" ]; then
-  PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin" && pwd)/code-trace.ts"
+if [ -f "${SCRIPT_DIR}/plugin/opencode/code-trace.ts" ]; then
+  PLUGIN_SRC="${SCRIPT_DIR}/plugin/opencode/code-trace.ts"
+elif [ -f "${SCRIPT_DIR}/../plugin/opencode/code-trace.ts" ]; then
+  PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/opencode" && pwd)/code-trace.ts"
 fi
 
 PI_PLUGIN_SRC=""
@@ -157,7 +157,7 @@ install_opencode_plugin() {
   if [ -z "${PLUGIN_SRC}" ] || [ ! -f "${PLUGIN_SRC}" ]; then
     echo ""
     echo "Note: Plugin source not found at ${PLUGIN_SRC}. Skipping OpenCode plugin install."
-    echo "You can manually copy plugin/code-trace.ts to ${OPENCODE_PLUGIN_DIR}/"
+    echo "You can manually copy plugin/opencode/code-trace.ts to ${OPENCODE_PLUGIN_DIR}/"
     return
   fi
 
