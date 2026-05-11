@@ -30,7 +30,11 @@ fn parse_config_str(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.to_string(), value.to_string());
+            let key = key.trim();
+            let value = value.trim();
+            if !key.is_empty() {
+                map.insert(key.to_string(), value.to_string());
+            }
         }
     }
     map
@@ -81,5 +85,20 @@ mod tests {
     fn missing_file_returns_empty_map() {
         let map = parse_config_file(std::path::Path::new("/tmp/code-trace-does-not-exist.cfg"));
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn trims_whitespace_around_key_and_value() {
+        let content = "TRACE_TO_LANGFUSE = true \n";
+        let map = parse_config_str(content);
+        assert_eq!(map.get("TRACE_TO_LANGFUSE"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn skips_lines_with_empty_key() {
+        let content = "=orphan_value\nTRACE_TO_LANGFUSE=true\n";
+        let map = parse_config_str(content);
+        assert_eq!(map.len(), 1);
+        assert!(!map.contains_key(""));
     }
 }
