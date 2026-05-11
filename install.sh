@@ -206,18 +206,28 @@ elif detect_pi; then
   fi
 fi
 
-echo ""
-echo "Done! To enable tracing, add to your project's .claude/settings.local.json (Claude Code)"
-echo "or set environment variables for OpenCode and Pi Agent:"
-echo ""
-cat << 'EOF'
-{
-  "env": {
-    "TRACE_TO_LANGFUSE": "true",
-    "LANGFUSE_PUBLIC_KEY": "pk-lf-...",
-    "LANGFUSE_SECRET_KEY": "sk-lf-..."
-  }
-}
+# Create config file if it does not already exist
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace"
+CONFIG_FILE="${CONFIG_DIR}/config"
+
+if [ -f "${CONFIG_FILE}" ]; then
+  echo "Config file already exists: ${CONFIG_FILE}"
+else
+  mkdir -p "${CONFIG_DIR}"
+  cat > "${CONFIG_FILE}" << 'EOF'
+# code-trace configuration
+# Set TRACE_TO_LANGFUSE=true and add your Langfuse keys to enable tracing.
+TRACE_TO_LANGFUSE=false
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+# LANGFUSE_BASE_URL=https://cloud.langfuse.com
+# CODE_TRACE_DEBUG=false
 EOF
+  echo "Created config file: ${CONFIG_FILE}"
+fi
+
 echo ""
-echo "For OpenCode and Pi Agent extensions, set these environment variables in your shell profile."
+echo "Done! Edit ${CONFIG_FILE} to enable tracing:"
+echo "  Set TRACE_TO_LANGFUSE=true and add your LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY."
+echo ""
+echo "Environment variables override the config file if you need per-project overrides."
