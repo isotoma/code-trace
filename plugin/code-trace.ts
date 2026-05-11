@@ -74,8 +74,6 @@ export const CodeTracePlugin = async (ctx: {
     event: async (event: { type: string; properties?: Record<string, unknown> }) => {
       if (event.type !== "session.idle") return;
 
-      if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") return;
-
       const sessionId = event.properties?.sessionID as string | undefined;
       if (!sessionId) {
         await ctx.client.app.log({

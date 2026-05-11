@@ -42,8 +42,6 @@ function saveCursor(store: CursorStore): void {
 
 export default function (pi: any) {
   pi.on("agent_end", async (event: any, ctx: any) => {
-    if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") return;
-
     const allEntries: any[] = ctx.sessionManager.getEntries();
     const sessionId: string | undefined = allEntries[0]?.id;
     if (!sessionId) return;
