@@ -26,7 +26,6 @@ pub fn normalize_pi_agent_messages(messages: Vec<Value>) -> Vec<Value> {
                             result[prev_idx]["message"]["tool_results"] = json!(tr_arr);
                         }
                     }
-                    pending_tool_results.clear();
                 }
                 pending_assistant_idx = None;
 
@@ -59,7 +58,6 @@ pub fn normalize_pi_agent_messages(messages: Vec<Value>) -> Vec<Value> {
                             result[prev_idx]["message"]["tool_results"] = json!(tr_arr);
                         }
                     }
-                    pending_tool_results.clear();
                 }
 
                 let id = msg
