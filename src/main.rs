@@ -29,6 +29,13 @@ fn run() -> i32 {
     let host = std::env::var("CC_LANGFUSE_BASE_URL")
         .or_else(|_| std::env::var("LANGFUSE_BASE_URL"))
         .unwrap_or_else(|_| "https://cloud.langfuse.com".to_string());
+    // Sanitize: stray quotes/whitespace/newlines or a trailing slash in the
+    // base URL otherwise produce ureq's "invalid uri character" / redirect errors.
+    let host = host
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim_end_matches('/')
+        .to_string();
 
     if public_key.is_empty() || secret_key.is_empty() {
         return 0;

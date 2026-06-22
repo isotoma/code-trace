@@ -31,13 +31,28 @@ fn parse_config_str(content: &str) -> HashMap<String, String> {
         }
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim();
-            let value = value.trim();
+            let value = strip_quotes(value.trim());
             if !key.is_empty() {
                 map.insert(key.to_string(), value.to_string());
             }
         }
     }
     map
+}
+
+/// Strip one layer of matching surrounding quotes (single or double).
+/// Users often quote config values out of habit (e.g. `LANGFUSE_BASE_URL="https://..."`);
+/// without this the quotes end up inside the value and break the Langfuse URL.
+fn strip_quotes(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' || first == b'\'') && first == last {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
 }
 
 #[cfg(test)]
@@ -92,6 +107,36 @@ mod tests {
         let content = "TRACE_TO_LANGFUSE = true \n";
         let map = parse_config_str(content);
         assert_eq!(map.get("TRACE_TO_LANGFUSE"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn strips_surrounding_double_quotes() {
+        let content = "LANGFUSE_BASE_URL=\"https://cloud.langfuse.com\"\n";
+        let map = parse_config_str(content);
+        assert_eq!(
+            map.get("LANGFUSE_BASE_URL"),
+            Some(&"https://cloud.langfuse.com".to_string())
+        );
+    }
+
+    #[test]
+    fn strips_surrounding_single_quotes() {
+        let content = "LANGFUSE_BASE_URL='https://cloud.langfuse.com'\n";
+        let map = parse_config_str(content);
+        assert_eq!(
+            map.get("LANGFUSE_BASE_URL"),
+            Some(&"https://cloud.langfuse.com".to_string())
+        );
+    }
+
+    #[test]
+    fn keeps_interior_and_unmatched_quotes() {
+        // Unmatched leading quote is left untouched.
+        let map = parse_config_str("K=\"value\n");
+        assert_eq!(map.get("K"), Some(&"\"value".to_string()));
+        // A lone quote char stays as-is (len < 2 guard).
+        let map = parse_config_str("K=\"\n");
+        assert_eq!(map.get("K"), Some(&"\"".to_string()));
     }
 
     #[test]
