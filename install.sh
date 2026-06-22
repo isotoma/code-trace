@@ -42,7 +42,7 @@ case "${ARCH}" in
 esac
 
 case "${OS}" in
-  linux)  TARGET="${ARCH}-unknown-linux-gnu" ;;
+  linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
   darwin) TARGET="${ARCH}-apple-darwin" ;;
   *)
     echo "Unsupported OS: ${OS}" >&2

@@ -1,6 +1,6 @@
 [package]
 name = "code-trace"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Claude Code -> Langfuse trace hook"
 license = "MIT"
