@@ -180,6 +180,10 @@ Any other invocation falls through to the stdin/emit path, so the installed `Sto
 
 New sessions always trace by default. Note that pausing cannot recall a turn whose send was already forked — pause early; purge is the remediation.
 
+**First contact never uploads history.** The first time code-trace sees a session (no cursor in state — e.g. it was just installed mid-session, or an old session is resumed after install), it emits only the turn that fired the hook and fast-forwards past everything earlier. Pre-install content is never traced; the skip is recorded in the log.
+
+Known limitation: `TRACE_TO_LANGFUSE=false` is an on/off switch, not a privacy control — while it is off no state is touched at all, so for a session that already has a cursor, turns completed during the off period will emit when tracing is re-enabled. Use `pause` for "don't trace this"; it is airtight.
+
 ### Startup reminder (`--on-start`)
 
 Wired as a Claude Code `SessionStart` hook, `code-trace --on-start` records the session and prints one line — `tracing ENABLED → <host>` or `tracing PAUSED for this session` — which Claude Code injects as agent context. It prints nothing when tracing is not configured, and never emits.

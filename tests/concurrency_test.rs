@@ -181,6 +181,36 @@ fn pause_survives_concurrent_emit() {
     assert_eq!(fake.ingestion_posts(), posts_before);
 }
 
+// --- first contact: pre-existing content is never emitted ----------------------
+
+/// Installing/enabling code-trace must not upload history: the first time a
+/// session is seen (no cursor), only the turn that fired the hook is emitted.
+#[test]
+fn first_contact_emits_only_latest_turn() {
+    let fake = FakeLangfuse::start();
+    let env = TestEnv::with_langfuse(fake.url()).sync_send();
+    let sess = "sess-preexisting";
+    // Three turns already in the transcript before code-trace ever runs.
+    let transcript = write_transcript(env.home.path(), "t.jsonl", 3);
+
+    let (code, _, _) = env.run(&[], Some(&stop_payload(sess, &transcript)));
+    assert_eq!(code, 0);
+    assert_eq!(
+        turn_numbers(&fake, sess),
+        vec![3],
+        "only the turn that completed under code-trace may be emitted"
+    );
+    let state = env.read_state();
+    let cursor = &state.cursors[&state.sessions[sess].cursor_key];
+    assert_eq!(cursor.turn_count, 3, "skipped turns are counted, not renumbered");
+
+    // From the second hook on, normal emission.
+    append_turn(&transcript, 4);
+    let (code, _, _) = env.run(&[], Some(&stop_payload(sess, &transcript)));
+    assert_eq!(code, 0);
+    assert_eq!(turn_numbers(&fake, sess), vec![3, 4]);
+}
+
 // --- 3.4 purge semantics (green pins) -----------------------------------------
 
 #[test]
@@ -188,7 +218,12 @@ fn langfuse_only_purge_preserves_state_and_does_not_resurrect() {
     let fake = FakeLangfuse::start();
     let env = TestEnv::with_langfuse(fake.url()).sync_send();
     let sess = "sess-lfonly";
-    let transcript = write_transcript(env.home.path(), "t.jsonl", 2);
+    // Build the two-turn history hook-by-hook (a single first emit over a
+    // two-turn transcript would trip the first-contact cap).
+    let transcript = write_transcript(env.home.path(), "t.jsonl", 1);
+    let (code, _, _) = env.run(&[], Some(&stop_payload(sess, &transcript)));
+    assert_eq!(code, 0);
+    append_turn(&transcript, 2);
     let (code, _, _) = env.run(&[], Some(&stop_payload(sess, &transcript)));
     assert_eq!(code, 0);
     assert_eq!(turn_numbers(&fake, sess), vec![1, 2]);
