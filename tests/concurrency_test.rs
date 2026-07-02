@@ -2,9 +2,9 @@
 //! control — no agent involved. Payloads are crafted, environments are
 //! tmpdir-isolated, and sequencing uses the binary's own state lock file.
 //!
-//! Tests marked `#[ignore = "red until fix-state-locking..."]` demonstrate
-//! known defects of the current non-blocking flock; `fix-state-locking`
-//! removes the ignores as its acceptance criteria.
+//! The lock tests (mutual exclusion, pause-vs-emit, stress) landed red under
+//! the original non-blocking flock and are the acceptance criteria for the
+//! blocking-lock fix.
 
 mod support;
 
@@ -115,7 +115,6 @@ fn pause_and_resume_round_trip() {
 // --- 3.2 lock mutual exclusion (red) -----------------------------------------
 
 #[test]
-#[ignore = "red until fix-state-locking: flock result is ignored, the lock never blocks"]
 fn pause_blocks_while_test_holds_the_state_lock() {
     let env = TestEnv::new();
     let mut state = code_trace::state::State::default();
@@ -148,7 +147,6 @@ fn pause_blocks_while_test_holds_the_state_lock() {
 // --- 3.3 pause survives a concurrent emit (red) -------------------------------
 
 #[test]
-#[ignore = "red until fix-state-locking: last-writer-wins save can drop a concurrent pause"]
 fn pause_survives_concurrent_emit() {
     let fake = FakeLangfuse::start();
     let env = TestEnv::with_langfuse(fake.url());
@@ -297,7 +295,6 @@ fn held_send_lands_after_purge_and_trace_reappears() {
 // --- 3.6 stress: invariants under contention (red) ------------------------------
 
 #[test]
-#[ignore = "may flake red until fix-state-locking: concurrent saves lose cursors/flags"]
 fn stress_concurrent_emits_uphold_invariants() {
     let fake = FakeLangfuse::start();
     let env = TestEnv::with_langfuse(fake.url()).sync_send();

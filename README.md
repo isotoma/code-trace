@@ -234,7 +234,7 @@ Caveats: deleting the transcript removes the session from Claude Code's `--resum
 
 State is stored in `~/.local/share/code-trace/`:
 - `state.json` — `{ "cursors": ..., "sessions": ... }`: turn cursor per session, plus a session registry (id, source, transcript path, suppressed flag, last seen) used by the privacy CLI. Older flat-shaped files are migrated in place with cursors preserved.
-- `state.lock` — file lock for concurrent access
+- `state.lock` — blocking exclusive lock serializing all state writes; since 0.3.1 concurrent invocations (parallel agents, pause/purge commands) queue instead of racing, so a `pause` can no longer be lost to a concurrently-running hook
 - `opencode_cursor.json` — OpenCode per-session message cursor
 - `pi_agent_cursor.json` — Pi per-session entry cursor
 - `code_trace.log` — trace log

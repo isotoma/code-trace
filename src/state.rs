@@ -25,7 +25,22 @@ fn lock_file() -> Option<PathBuf> {
     Some(state_dir()?.join("state.lock"))
 }
 
-/// RAII file lock using flock. Best-effort: proceeds without lock on failure.
+/// RAII file lock using a blocking exclusive flock. Every state
+/// read-modify-write cycle must run under this lock: without it, concurrent
+/// invocations (parallel agents' hooks, pause/purge commands) are
+/// last-writer-wins on state.json and can silently drop a pause.
+///
+/// Invariant: acquire at most ONCE per process, at the entry point, before
+/// the first state access — a second blocking acquisition on a new file
+/// descriptor would deadlock against our own lock. Helpers like `load_state`
+/// and `save_state` never acquire it themselves.
+///
+/// `purge` holds the lock across its Langfuse HTTP calls, so concurrent
+/// hooks queue behind it — accepted: purge is rare and bounded by HTTP
+/// timeouts, and releasing mid-purge would reopen the read-modify-write gap.
+///
+/// On genuine flock failure (not contention) this logs and proceeds
+/// unlocked — degraded but loud, and no worse than not having a lock.
 pub struct FileLock {
     _file: Option<File>,
 }
@@ -37,13 +52,25 @@ impl FileLock {
         };
         let file = match OpenOptions::new().create(true).append(true).open(&path) {
             Ok(f) => f,
-            Err(_) => return FileLock { _file: None },
+            Err(e) => {
+                log::error(&format!("state lock: cannot open {}: {e}", path.display()));
+                return FileLock { _file: None };
+            }
         };
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
-            unsafe {
-                libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB);
+            loop {
+                let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+                if rc == 0 {
+                    break;
+                }
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                log::error(&format!("state lock: flock failed: {err}; proceeding unlocked"));
+                break;
             }
         }
         FileLock { _file: Some(file) }
