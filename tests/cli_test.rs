@@ -3,7 +3,6 @@
 //! developer's real code-trace state is never read or written.
 
 use code_trace::state::{state_key, SessionRecord, SessionState, State};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};

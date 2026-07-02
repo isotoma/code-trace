@@ -247,6 +247,15 @@ Enable debug logging with `CODE_TRACE_DEBUG=true`.
 
 On first run after an update, any existing state in `~/.claude/state/code_trace_state.json` is migrated to `~/.local/share/code-trace/state.json`.
 
+## Testing
+
+Two tracks, split by what only each can prove:
+
+- **Track 2 — behaviour and concurrency** (`cargo test`): drives the binary directly with crafted payloads against an in-process fake Langfuse (`tests/support/`), with tmpdir-isolated environments. Covers pause/resume/purge semantics, the purge-vs-in-flight-send window, and concurrent-invocation scenarios (`tests/concurrency_test.rs`). Tests marked `#[ignore = "red until fix-state-locking..."]` demonstrate known state-locking defects and are un-ignored by that fix.
+- **Track 1 — the real Claude Code seam** (`harness/`): runs the pinned real `claude` CLI in a container with code-trace wired as hooks, a stub model API, and the same fake Langfuse as a service. Proves hook wiring, real payload shapes, and config-file discovery. See `harness/README.md`.
+
+`CODE_TRACE_SYNC_SEND=1` (tests only) makes the Langfuse send inline instead of forked, so process exit implies delivery — used for exact "nothing was sent" assertions.
+
 ## License
 
 MIT

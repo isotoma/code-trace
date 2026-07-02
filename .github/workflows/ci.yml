@@ -12,3 +12,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
       - run: cargo clippy -- -D warnings
+
+  # Track 1: real claude CLI + stub model + fake Langfuse in containers.
+  # Slower than cargo test and needs Docker, so it is a separate job.
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker compose -f harness/docker-compose.yml up
+          --build --exit-code-from runner --abort-on-container-exit
+      - run: docker compose -f harness/docker-compose.yml down -v
+        if: always()

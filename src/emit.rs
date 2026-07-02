@@ -189,8 +189,17 @@ pub struct LangfuseConfig {
 
 /// Fire-and-forget: fork the process. Parent returns immediately,
 /// child sends the HTTP request via ureq and exits.
+///
+/// With CODE_TRACE_SYNC_SEND=1 the send happens inline instead, so process
+/// exit guarantees delivery — tests rely on this for exact "nothing was
+/// sent" assertions against a forked child they cannot wait on.
 pub fn send_batch_fire_and_forget(config: &LangfuseConfig, events: Vec<Value>) {
     let url = format!("{}/api/public/ingestion", config.host);
+
+    if std::env::var("CODE_TRACE_SYNC_SEND").as_deref() == Ok("1") {
+        send_batch_blocking(config, &url, events);
+        return;
+    }
 
     // Fork: parent returns, child does the HTTP call
     #[cfg(unix)]
