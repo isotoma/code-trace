@@ -1,5 +1,7 @@
+pub mod cli;
 pub mod config;
 pub mod emit;
+pub mod langfuse;
 pub mod log;
 pub mod opencode;
 pub mod payload;

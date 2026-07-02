@@ -151,6 +151,61 @@ Environment variables take precedence over the config file. This is useful for p
 
 The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_LANGFUSE_PUBLIC_KEY`).
 
+## Privacy controls
+
+Once `TRACE_TO_LANGFUSE=true` is set, every session traces by default. When working with confidential data, individual sessions can be paused, inspected, and purged without touching the global flag or other concurrently-running agents.
+
+### CLI
+
+```
+code-trace                          read a Stop-hook payload on stdin and emit (default)
+code-trace --on-start               SessionStart handler: record session, print tracing reminder
+code-trace status                   show tracing configuration and session counts
+code-trace sessions                 list known sessions (most recent first)
+code-trace pause [--session <id>]   pause tracing for a session (default: most recent)
+code-trace resume [--session <id>]  resume tracing for a session (default: most recent)
+code-trace purge --session <id>     delete a session's Langfuse traces, transcript, and state
+code-trace --version / --help
+```
+
+Any other invocation falls through to the stdin/emit path, so the installed `Stop` hook keeps working unchanged.
+
+### Private mode (pause/resume)
+
+`code-trace pause` marks the most-recently-seen session as suppressed and prints which session it targeted — with parallel agents, pass `--session <id>` (find ids with `code-trace sessions`) to be explicit. A suppressed session:
+
+- emits nothing: the Stop hook exits before reading the transcript or sending anything, for all sources (Claude Code, OpenCode, Pi);
+- **stays private for its lifetime**, including across `--resume` — only an explicit `code-trace resume` or `purge` clears it;
+- is never age-pruned from the registry while suppressed.
+
+New sessions always trace by default. Note that pausing cannot recall a turn whose send was already forked — pause early; purge is the remediation.
+
+### Startup reminder (`--on-start`)
+
+Wired as a Claude Code `SessionStart` hook, `code-trace --on-start` records the session and prints one line — `tracing ENABLED → <host>` or `tracing PAUSED for this session` — which Claude Code injects as agent context. It prints nothing when tracing is not configured, and never emits.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "code-trace --on-start" }] }
+    ]
+  }
+}
+```
+
+### Purge
+
+`code-trace purge --session <id>` removes all three copies of a session's data:
+
+1. **Langfuse traces** — listed via `GET /api/public/traces?sessionId=` and bulk-deleted (cascades to generations and spans);
+2. **local transcript** — the Claude Code transcript JSONL, if recorded;
+3. **code-trace state** — the session's registry entry and cursor.
+
+Flags: `--langfuse-only` / `--local-only` restrict the scope; `--yes` skips the confirmation prompt; `--transcript-path <p>` purges a session traced before it was in the registry.
+
+Caveats: deleting the transcript removes the session from Claude Code's `--resume` history; purge cannot un-send anything outside code-trace's ownership (shell history, model-provider logs).
+
 ## How it works
 
 ### Claude Code
@@ -178,7 +233,7 @@ The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_
 ## State and logs
 
 State is stored in `~/.local/share/code-trace/`:
-- `state.json` — turn cursor per session
+- `state.json` — `{ "cursors": ..., "sessions": ... }`: turn cursor per session, plus a session registry (id, source, transcript path, suppressed flag, last seen) used by the privacy CLI. Older flat-shaped files are migrated in place with cursors preserved.
 - `state.lock` — file lock for concurrent access
 - `opencode_cursor.json` — OpenCode per-session message cursor
 - `pi_agent_cursor.json` — Pi per-session entry cursor

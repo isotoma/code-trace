@@ -50,3 +50,25 @@ impl Source {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_known_sources() {
+        assert_eq!(Source::parse("claude-code"), Some(Source::ClaudeCode));
+        assert_eq!(Source::parse("opencode"), Some(Source::Opencode));
+        assert_eq!(Source::parse("pi-agent"), Some(Source::PiAgent));
+    }
+
+    // SessionStart payloads carry a `source` field of "startup"/"resume"/etc.
+    // These must NOT parse as an agent source, so the payload falls through
+    // to Claude Code parsing.
+    #[test]
+    fn rejects_session_start_source_values() {
+        for v in ["startup", "resume", "clear", "compact", "unknown"] {
+            assert_eq!(Source::parse(v), None, "{v} must not parse as a Source");
+        }
+    }
+}

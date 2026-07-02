@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::source::Source;
 
@@ -43,6 +43,13 @@ impl Input {
             Input::ClaudeCode { session_id, .. } => session_id.as_deref(),
             Input::Opencode { session_id, .. } => session_id.as_deref(),
             Input::PiAgent { session_id, .. } => session_id.as_deref(),
+        }
+    }
+
+    pub fn transcript_path(&self) -> Option<&Path> {
+        match self {
+            Input::ClaudeCode { transcript_path, .. } => transcript_path.as_deref(),
+            Input::Opencode { .. } | Input::PiAgent { .. } => None,
         }
     }
 
