@@ -1,0 +1,32 @@
+services:
+  fake-langfuse:
+    build:
+      context: ..
+      dockerfile: harness/Dockerfile
+    command: fake-langfuse
+    environment:
+      FAKE_LANGFUSE_ADDR: 0.0.0.0:3080
+
+  stub-model:
+    build:
+      context: ..
+      dockerfile: harness/Dockerfile
+    command: python3 /harness/stub-model/server.py
+    environment:
+      STUB_MODEL_PORT: "3081"
+
+  runner:
+    build:
+      context: ..
+      dockerfile: harness/Dockerfile
+    command: /harness/run-scenarios.sh
+    depends_on:
+      - fake-langfuse
+      - stub-model
+    environment:
+      FAKE_LANGFUSE_URL: http://fake-langfuse:3080
+      ANTHROPIC_BASE_URL: http://stub-model:3081
+      ANTHROPIC_API_KEY: sk-ant-dummy
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_ERROR_REPORTING: "1"
