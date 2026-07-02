@@ -66,7 +66,7 @@ pub fn sessions() -> i32 {
         return 0;
     }
     let mut records: Vec<_> = st.sessions.values().collect();
-    records.sort_by(|a, b| b.last_seen_epoch.cmp(&a.last_seen_epoch));
+    records.sort_by_key(|r| std::cmp::Reverse(r.last_seen_epoch));
     println!(
         "{:<14} {:<12} {:<10} {:<17} TRANSCRIPT",
         "SESSION", "SOURCE", "PAUSED", "LAST SEEN"
