@@ -298,7 +298,7 @@ fn pause_fails_cleanly_on_empty_registry_and_unknown_id() {
 }
 
 #[test]
-fn suppressed_session_emits_nothing_and_advances_no_cursor() {
+fn suppressed_session_emits_nothing_but_consumes_turns() {
     let server = MockServer::start(vec![]);
     let env = TestEnv::with_langfuse(&server.url);
     let transcript = write_transcript(env.home.path());
@@ -312,14 +312,17 @@ fn suppressed_session_emits_nothing_and_advances_no_cursor() {
     let (code, _, _) = env.run(&[], Some(&stop_payload("sess-supp", &transcript)));
     assert_eq!(code, 0);
 
-    // No cursor may exist / advance for this session, and the send fork must
-    // never happen. Give a forked child a moment to (wrongly) send.
+    // The send fork must never happen. Give a forked child a moment to
+    // (wrongly) send.
     std::thread::sleep(std::time::Duration::from_millis(700));
     assert!(server.requests().is_empty(), "suppressed session sent data");
+    // But the cursor advances past the paused turns, so they can never be
+    // emitted later — pause means never traced, not deferred.
     let state = env.read_state();
     let cursor_key = &state.sessions["sess-supp"].cursor_key;
-    let offset = state.cursors.get(cursor_key).map(|c| c.offset).unwrap_or(0);
-    assert_eq!(offset, 0, "cursor advanced for a suppressed session");
+    let cursor = state.cursors.get(cursor_key).expect("cursor must exist");
+    assert!(cursor.offset > 0, "cursor must advance past suppressed turns");
+    assert_eq!(cursor.turn_count, 1, "consumed turns are counted");
     assert!(state.sessions["sess-supp"].suppressed, "suppression must survive the hook");
 }
 

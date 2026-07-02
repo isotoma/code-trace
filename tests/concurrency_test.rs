@@ -105,11 +105,9 @@ fn pause_and_resume_round_trip() {
     let (code, _, _) = env.run(&[], Some(&stop_payload(sess, &transcript)));
     assert_eq!(code, 0);
 
-    // Pinned current behaviour: the cursor does not advance while suppressed,
-    // so the paused-period turn (2) is emitted after resume alongside turn 3.
-    // Whether that replay is desirable is an open design question for the
-    // privacy feature; this assertion documents what the binary does today.
-    assert_eq!(turn_numbers(&fake, sess), vec![1, 2, 3]);
+    // The paused-period turn (2) was consumed while suppressed and is never
+    // emitted; the numbering gap after resume is deliberate and visible.
+    assert_eq!(turn_numbers(&fake, sess), vec![1, 3]);
 }
 
 // --- 3.2 lock mutual exclusion (red) -----------------------------------------
