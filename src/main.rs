@@ -1,50 +1,16 @@
-use code_trace::{config, emit, log, opencode, payload, pi_agent, state, tags, transcript, turns};
+use code_trace::{cli, config, emit, langfuse, log, opencode, payload, pi_agent, state, tags, transcript, turns};
 use std::time::Instant;
 
 fn run() -> i32 {
-    let file_config = config::load_config();
-    for (k, v) in &file_config {
-        if std::env::var(k).is_err() {
-            std::env::set_var(k, v);
-        }
-    }
-
     let start = Instant::now();
     log::debug("code-trace started");
 
-    if std::env::var("TRACE_TO_LANGFUSE")
-        .unwrap_or_default()
-        .to_lowercase()
-        != "true"
-    {
+    if !langfuse::tracing_enabled() {
         return 0;
     }
 
-    let public_key = std::env::var("CC_LANGFUSE_PUBLIC_KEY")
-        .or_else(|_| std::env::var("LANGFUSE_PUBLIC_KEY"))
-        .unwrap_or_default();
-    let secret_key = std::env::var("CC_LANGFUSE_SECRET_KEY")
-        .or_else(|_| std::env::var("LANGFUSE_SECRET_KEY"))
-        .unwrap_or_default();
-    let host = std::env::var("CC_LANGFUSE_BASE_URL")
-        .or_else(|_| std::env::var("LANGFUSE_BASE_URL"))
-        .unwrap_or_else(|_| "https://cloud.langfuse.com".to_string());
-    // Sanitize: stray quotes/whitespace/newlines or a trailing slash in the
-    // base URL otherwise produce ureq's "invalid uri character" / redirect errors.
-    let host = host
-        .trim()
-        .trim_matches(|c| c == '"' || c == '\'')
-        .trim_end_matches('/')
-        .to_string();
-
-    if public_key.is_empty() || secret_key.is_empty() {
+    let Some(config) = langfuse::config_from_env() else {
         return 0;
-    }
-
-    let config = emit::LangfuseConfig {
-        host,
-        public_key,
-        secret_key,
     };
 
     let raw = payload::read_stdin();
@@ -62,10 +28,27 @@ fn run() -> i32 {
     let cwd = input.cwd().map(String::from);
     let env_tags = tags::gather_env_tags(source, cwd.as_deref(), input.agent_version());
 
-
     let _lock = state::FileLock::acquire();
     let mut global_state = state::load_state();
-    state::prune_old_sessions(&mut global_state);
+    global_state.prune();
+
+    // Privacy guarantee: record the session and bail out before any transcript
+    // byte is read or any send is forked. Covers all three sources.
+    let transcript_str = input
+        .transcript_path()
+        .map(|p| p.to_string_lossy().to_string());
+    global_state.record_session(
+        source.as_str(),
+        &session_id,
+        transcript_str.as_deref(),
+        cwd.as_deref(),
+    );
+    if global_state.is_suppressed(&session_id) {
+        state::save_state(&global_state);
+        log::debug(&format!("session {session_id} suppressed, skipping"));
+        return 0;
+    }
+    state::save_state(&global_state);
 
     match input {
         payload::Input::ClaudeCode {
@@ -91,18 +74,18 @@ fn run() -> i32 {
                 &session_id,
                 &transcript_path.to_string_lossy(),
             );
-            let mut ss = global_state.get(&key).cloned().unwrap_or_default();
+            let mut ss = global_state.cursors.get(&key).cloned().unwrap_or_default();
 
             let msgs = transcript::read_new_jsonl(&transcript_path, &mut ss);
             if msgs.is_empty() {
-                global_state.insert(key, ss);
+                global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
                 return 0;
             }
 
             let built_turns = turns::build_turns(msgs);
             if built_turns.is_empty() {
-                global_state.insert(key, ss);
+                global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
                 return 0;
             }
@@ -125,7 +108,7 @@ fn run() -> i32 {
 
             ss.turn_count += emitted;
             state::touch(&mut ss);
-            global_state.insert(key, ss);
+            global_state.cursors.insert(key, ss);
             state::save_state(&global_state);
 
             emit::send_batch_fire_and_forget(&config, all_events);
@@ -148,12 +131,12 @@ fn run() -> i32 {
             }
 
             let key = state::state_key(source.as_str(), &session_id, &session_id);
-            let mut ss = global_state.get(&key).cloned().unwrap_or_default();
+            let mut ss = global_state.cursors.get(&key).cloned().unwrap_or_default();
 
             let normalized = opencode::normalize_opencode_messages(messages);
             let built_turns = turns::build_turns(normalized);
             if built_turns.is_empty() {
-                global_state.insert(key, ss);
+                global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
                 return 0;
             }
@@ -176,7 +159,7 @@ fn run() -> i32 {
 
             ss.turn_count += emitted;
             state::touch(&mut ss);
-            global_state.insert(key, ss);
+            global_state.cursors.insert(key, ss);
             state::save_state(&global_state);
 
             emit::send_batch_fire_and_forget(&config, all_events);
@@ -199,12 +182,12 @@ fn run() -> i32 {
             }
 
             let key = state::state_key(source.as_str(), &session_id, &session_id);
-            let mut ss = global_state.get(&key).cloned().unwrap_or_default();
+            let mut ss = global_state.cursors.get(&key).cloned().unwrap_or_default();
 
             let normalized = pi_agent::normalize_pi_agent_messages(messages);
             let built_turns = turns::build_turns(normalized);
             if built_turns.is_empty() {
-                global_state.insert(key, ss);
+                global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
                 return 0;
             }
@@ -227,7 +210,7 @@ fn run() -> i32 {
 
             ss.turn_count += emitted;
             state::touch(&mut ss);
-            global_state.insert(key, ss);
+            global_state.cursors.insert(key, ss);
             state::save_state(&global_state);
 
             emit::send_batch_fire_and_forget(&config, all_events);
@@ -244,5 +227,26 @@ fn run() -> i32 {
 }
 
 fn main() {
-    std::process::exit(run());
+    let file_config = config::load_config();
+    for (k, v) in &file_config {
+        if std::env::var(k).is_err() {
+            std::env::set_var(k, v);
+        }
+    }
+
+    let args: Vec<String> = std::env::args().collect();
+    // Known subcommands/flags dispatch; anything else falls through to the
+    // stdin/emit path so the installed Stop hook keeps working unchanged.
+    let code = match args.get(1).map(String::as_str) {
+        Some("--on-start") => cli::on_start(),
+        Some("status") => cli::status(),
+        Some("sessions") => cli::sessions(),
+        Some("pause") => cli::pause(&args[2..]),
+        Some("resume") => cli::resume(&args[2..]),
+        Some("purge") => cli::purge(&args[2..]),
+        Some("--version") | Some("-V") => cli::version(),
+        Some("--help") | Some("-h") => cli::help(),
+        _ => run(),
+    };
+    std::process::exit(code);
 }
