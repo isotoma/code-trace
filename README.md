@@ -174,7 +174,7 @@ Any other invocation falls through to the stdin/emit path, so the installed `Sto
 
 `code-trace pause` marks the most-recently-seen session as suppressed and prints which session it targeted — with parallel agents, pass `--session <id>` (find ids with `code-trace sessions`) to be explicit. A suppressed session:
 
-- emits nothing: the Stop hook exits before reading the transcript or sending anything, for all sources (Claude Code, OpenCode, Pi);
+- emits nothing, for all sources (Claude Code, OpenCode, Pi) — and turns that happen while paused are **never traced, not deferred**: the hook consumes them (the cursor advances past them) without sending, so they cannot replay after `resume`. Turn numbering in Langfuse shows a gap where the pause was;
 - **stays private for its lifetime**, including across `--resume` — only an explicit `code-trace resume` or `purge` clears it;
 - is never age-pruned from the registry while suppressed.
 

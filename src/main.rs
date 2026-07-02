@@ -1,6 +1,24 @@
 use code_trace::{cli, config, emit, langfuse, log, opencode, payload, pi_agent, state, tags, transcript, turns};
 use std::time::Instant;
 
+/// Advance a suppressed session's cursor past turns it will never emit, so
+/// they cannot replay after `resume`. Paused means never traced, not deferred.
+fn consume_suppressed(
+    global_state: &mut state::State,
+    key: String,
+    mut ss: state::SessionState,
+    turns: usize,
+    session_id: &str,
+) {
+    ss.turn_count += turns as u32;
+    state::touch(&mut ss);
+    global_state.cursors.insert(key, ss);
+    state::save_state(global_state);
+    log::debug(&format!(
+        "session {session_id} suppressed; consumed {turns} turns without emitting"
+    ));
+}
+
 fn run() -> i32 {
     let start = Instant::now();
     log::debug("code-trace started");
@@ -32,8 +50,10 @@ fn run() -> i32 {
     let mut global_state = state::load_state();
     global_state.prune();
 
-    // Privacy guarantee: record the session and bail out before any transcript
-    // byte is read or any send is forked. Covers all three sources.
+    // Privacy guarantee: a suppressed session's input is still consumed (the
+    // cursor advances past its turns, in each source arm below) but no event
+    // is ever built and no send is ever forked — turns that occur while
+    // paused are never traced, including after a later resume.
     let transcript_str = input
         .transcript_path()
         .map(|p| p.to_string_lossy().to_string());
@@ -43,11 +63,7 @@ fn run() -> i32 {
         transcript_str.as_deref(),
         cwd.as_deref(),
     );
-    if global_state.is_suppressed(&session_id) {
-        state::save_state(&global_state);
-        log::debug(&format!("session {session_id} suppressed, skipping"));
-        return 0;
-    }
+    let suppressed = global_state.is_suppressed(&session_id);
     state::save_state(&global_state);
 
     match input {
@@ -87,6 +103,11 @@ fn run() -> i32 {
             if built_turns.is_empty() {
                 global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
+                return 0;
+            }
+
+            if suppressed {
+                consume_suppressed(&mut global_state, key, ss, built_turns.len(), &session_id);
                 return 0;
             }
 
@@ -141,6 +162,11 @@ fn run() -> i32 {
                 return 0;
             }
 
+            if suppressed {
+                consume_suppressed(&mut global_state, key, ss, built_turns.len(), &session_id);
+                return 0;
+            }
+
             let mut all_events = Vec::new();
             let mut emitted = 0u32;
             for t in &built_turns {
@@ -189,6 +215,11 @@ fn run() -> i32 {
             if built_turns.is_empty() {
                 global_state.cursors.insert(key, ss);
                 state::save_state(&global_state);
+                return 0;
+            }
+
+            if suppressed {
+                consume_suppressed(&mut global_state, key, ss, built_turns.len(), &session_id);
                 return 0;
             }
 
