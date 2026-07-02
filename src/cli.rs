@@ -214,9 +214,10 @@ pub fn purge(args: &[String]) -> i32 {
         }
     };
 
-    let _lock = state::FileLock::acquire();
-    let mut st = state::load_state();
-    let record = st.sessions.get(&parsed.session_id).cloned();
+    // Build the plan and confirm from a lock-free read (safe: saves are
+    // atomic tmp+rename). Taking the blocking lock before the interactive
+    // prompt would stall every hook on the machine while a human decides.
+    let record = state::load_state().sessions.get(&parsed.session_id).cloned();
     let transcript_path = parsed
         .transcript_path
         .clone()
@@ -236,6 +237,11 @@ pub fn purge(args: &[String]) -> i32 {
         println!("aborted, nothing deleted");
         return 0;
     }
+
+    // Single lock acquisition for the mutation; state is re-loaded fresh so
+    // nothing decided during the unlocked prompt window is trusted for writes.
+    let _lock = state::FileLock::acquire();
+    let mut st = state::load_state();
 
     let mut code = 0;
 

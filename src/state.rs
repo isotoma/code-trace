@@ -30,10 +30,13 @@ fn lock_file() -> Option<PathBuf> {
 /// invocations (parallel agents' hooks, pause/purge commands) are
 /// last-writer-wins on state.json and can silently drop a pause.
 ///
-/// Invariant: acquire at most ONCE per process, at the entry point, before
-/// the first state access — a second blocking acquisition on a new file
-/// descriptor would deadlock against our own lock. Helpers like `load_state`
-/// and `save_state` never acquire it themselves.
+/// Invariant: acquire at most ONCE per process, before the first state
+/// mutation — a second blocking acquisition on a new file descriptor would
+/// deadlock against our own lock. Helpers like `load_state` and `save_state`
+/// never acquire it themselves. Read-only peeks without the lock are safe
+/// (saves are atomic tmp+rename) and are used by `status`/`sessions` and by
+/// `purge`'s confirmation prompt, which must not block hooks while waiting
+/// on a human.
 ///
 /// `purge` holds the lock across its Langfuse HTTP calls, so concurrent
 /// hooks queue behind it — accepted: purge is rare and bounded by HTTP
