@@ -27,6 +27,19 @@ print($1)
 
 reset_fake() { curl -s -X POST "$FAKE/_test/reset" > /dev/null; }
 
+# Compose's depends_on only orders container start, not server readiness —
+# wait until both services actually answer before running any scenario.
+wait_for_services() {
+  for _ in $(seq 60); do
+    if curl -sf -o /dev/null "$FAKE/_test/events" \
+       && curl -s -o /dev/null -X POST -d '{}' "${ANTHROPIC_BASE_URL:?}/v1/messages"; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "services not reachable after 60s (fake langfuse / stub model)"
+}
+
 new_home() {
   rm -rf "$HOME" && mkdir -p "$HOME/.claude" "$WORK"
 }
@@ -87,6 +100,8 @@ uuid() { python3 -c "import uuid; print(uuid.uuid4())"; }
 transcript_of() { # session-id
   find "$HOME/.claude/projects" -name "$1.jsonl" | head -1
 }
+
+wait_for_services
 
 # --- (a) one turn -> one trace with the session id ---------------------------
 say "scenario a: one turn produces one trace"

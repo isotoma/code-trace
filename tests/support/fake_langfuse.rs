@@ -271,6 +271,17 @@ fn handle_connection(stream: TcpStream, inner: &Inner) {
     }
 
     let authorized = is_authorized(&req);
+    // For accepted ingestion, events are stored BEFORE the request is
+    // recorded: pollers gate on the request count, so a counted POST must
+    // already have its events visible.
+    if authorized && req.method == "POST" && route == "/api/public/ingestion" {
+        let batch = serde_json::from_str::<Value>(&req.body)
+            .ok()
+            .and_then(|v| v.get("batch").cloned());
+        if let Some(Value::Array(events)) = batch {
+            inner.events.lock().unwrap().extend(events);
+        }
+    }
     inner.requests.lock().unwrap().push(RecordedRequest {
         method: req.method.clone(),
         path: req.path.clone(),
@@ -284,18 +295,15 @@ fn handle_connection(stream: TcpStream, inner: &Inner) {
 
     match (req.method.as_str(), route) {
         ("POST", "/api/public/ingestion") => {
-            let batch = serde_json::from_str::<Value>(&req.body)
-                .ok()
-                .and_then(|v| v.get("batch").cloned());
-            if let Some(Value::Array(events)) = batch {
-                inner.events.lock().unwrap().extend(events);
-            }
             respond(&stream, "207 Multi-Status", r#"{"successes":[],"errors":[]}"#);
         }
         ("GET", "/api/public/traces") => {
             let session_id = query_param(&req.path, "sessionId").unwrap_or_default();
             let page: usize = query_param(&req.path, "page").and_then(|v| v.parse().ok()).unwrap_or(1);
-            let limit: usize = query_param(&req.path, "limit").and_then(|v| v.parse().ok()).unwrap_or(50);
+            let limit: usize = query_param(&req.path, "limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50)
+                .max(1); // limit=0 would divide by zero below
             let ids = {
                 let events = inner.events.lock().unwrap();
                 let deleted = inner.deleted.lock().unwrap();

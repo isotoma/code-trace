@@ -115,7 +115,7 @@ fn purge_round_trip_lists_pages_and_deletes() {
 #[test]
 fn hold_delays_ingestion_but_not_other_routes() {
     let fake = FakeLangfuse::start();
-    fake.hold(300);
+    fake.hold(1000);
 
     // A held ingestion POST takes at least the hold duration...
     let start = std::time::Instant::now();
@@ -123,17 +123,19 @@ fn hold_delays_ingestion_but_not_other_routes() {
     let auth = auth_header();
     let handle = std::thread::spawn(move || post_batch(&ingest_url, Some(&auth), vec![trace_event("s1", "t1")]));
 
-    // ...while a concurrent GET on another connection answers immediately.
+    // ...while a concurrent GET on another connection completes well inside
+    // the hold window rather than queueing behind it. The generous margin
+    // (500ms vs a 1s hold) keeps this robust on slow CI runners.
     std::thread::sleep(std::time::Duration::from_millis(50));
     let get_start = std::time::Instant::now();
     let _ = get_traces(fake.url(), "s1", 1, 100);
     assert!(
-        get_start.elapsed() < std::time::Duration::from_millis(200),
+        get_start.elapsed() < std::time::Duration::from_millis(500),
         "GET must not queue behind a held ingestion"
     );
 
     assert_eq!(handle.join().unwrap(), 207);
-    assert!(start.elapsed() >= std::time::Duration::from_millis(300));
+    assert!(start.elapsed() >= std::time::Duration::from_millis(1000));
 
     // Clearing the hold restores fast ingestion.
     fake.hold(0);
