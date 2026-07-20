@@ -9,6 +9,26 @@ SETTINGS_FILE="${HOME}/.claude/settings.json"
 OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
 PI_EXTENSION_DIR="${HOME}/.pi/agent/extensions"
 
+# Where interactive prompts read from. Resolved once by resolve_tty_in; empty
+# until then, and empty means "no terminal — skip every prompt".
+TTY_IN=""
+
+# Resolve where interactive prompts should read from. Prefer stdin when it is a
+# TTY (e.g. `bash install.sh`); otherwise the controlling terminal, so a piped
+# install (curl | bash) — whose stdin is the script itself, not a TTY — can
+# still prompt without reading its own script text as the answer. Empty when no
+# terminal can be opened at all (CI/unattended): every prompt is then skipped
+# rather than consuming the piped script. Idempotent.
+resolve_tty_in() {
+  if [ -t 0 ]; then
+    TTY_IN="/dev/stdin"
+  elif { : < /dev/tty; } 2>/dev/null; then
+    TTY_IN="/dev/tty"
+  else
+    TTY_IN=""
+  fi
+}
+
 detect_opencode() {
   [ -d "${HOME}/.config/opencode" ] || [ -f "${HOME}/.config/opencode/opencode.json" ]
 }
@@ -224,13 +244,14 @@ install_pi_extension() {
 maybe_install_opencode() {
   if [ "${INSTALL_OPENCODE}" = true ]; then
     install_opencode_plugin
-  elif detect_opencode; then
+  elif detect_opencode && [ -n "${TTY_IN}" ]; then
     echo ""
     echo "OpenCode detected. Install the code-trace plugin?"
     echo "  ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
     echo ""
-    read -p "Install OpenCode plugin? [y/N] " -r
-    if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
+    local reply=""
+    read -p "Install OpenCode plugin? [y/N] " -r reply < "${TTY_IN}" || reply=""
+    if [[ "${reply}" =~ ^[Yy]$ ]]; then
       install_opencode_plugin
     fi
   fi
@@ -239,13 +260,14 @@ maybe_install_opencode() {
 maybe_install_pi() {
   if [ "${INSTALL_PI}" = true ]; then
     install_pi_extension
-  elif detect_pi; then
+  elif detect_pi && [ -n "${TTY_IN}" ]; then
     echo ""
     echo "Pi Agent detected. Install the code-trace extension?"
     echo "  ${PI_EXTENSION_DIR}/code-trace.ts"
     echo ""
-    read -p "Install Pi Agent extension? [y/N] " -r
-    if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
+    local reply=""
+    read -p "Install Pi Agent extension? [y/N] " -r reply < "${TTY_IN}" || reply=""
+    if [[ "${reply}" =~ ^[Yy]$ ]]; then
       install_pi_extension
     fi
   fi
@@ -258,25 +280,19 @@ create_config() {
   config_file="${config_dir}/config"
 
   # Ask for an email to attach to traces as the Langfuse user id, unless one is
-  # already configured. Read the prompt from the controlling terminal rather
-  # than stdin, so a piped install (curl | bash) — whose stdin is the script
-  # itself, not a TTY — can still prompt. Skip only when no terminal can be
-  # opened at all (e.g. CI), so unattended installs neither hang nor consume
-  # the piped script.
-  local user_email="" tty_in=""
-  if [ -t 0 ]; then
-    tty_in="/dev/stdin"
-  elif { : < /dev/tty; } 2>/dev/null; then
-    tty_in="/dev/tty"
-  fi
+  # already configured. Prompts read from TTY_IN (the controlling terminal for a
+  # piped curl | bash install), resolved here in case create_config is called on
+  # its own; empty means no terminal, so skip rather than consume the script.
+  local user_email=""
+  [ -n "${TTY_IN}" ] || resolve_tty_in
 
   if grep -Eq '^[[:space:]]*LANGFUSE_USER_ID[[:space:]]*=' "${config_file}" 2>/dev/null; then
     echo "LANGFUSE_USER_ID already configured in ${config_file} — leaving as-is"
-  elif [ -n "${tty_in}" ]; then
+  elif [ -n "${TTY_IN}" ]; then
     echo ""
     echo "Optionally attach your email to traces as the Langfuse user id"
     echo "(enables Langfuse's per-user views). Leave blank to skip."
-    read -p "Email [skip]: " -r user_email < "${tty_in}" || user_email=""
+    read -p "Email [skip]: " -r user_email < "${TTY_IN}" || user_email=""
     user_email="$(printf '%s' "${user_email}" | tr -d '[:space:]')"
   fi
 
@@ -326,6 +342,8 @@ main() {
   if [ "${1:-}" = "--pi" ] || [ "${1:-}" = "-p" ]; then
     INSTALL_PI=true
   fi
+
+  resolve_tty_in
 
   resolve_target
   install_binary
