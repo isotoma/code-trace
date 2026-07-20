@@ -1,4 +1,4 @@
-use code_trace::{cli, config, emit, langfuse, log, opencode, payload, pi_agent, state, tags, transcript, turns};
+use code_trace::{cli, config, emit, langfuse, log, opencode, payload, pi_agent, setup, state, tags, transcript, turns};
 use std::time::Instant;
 
 /// Turns to skip when a session is seen for the first time (no cursor yet):
@@ -305,6 +305,7 @@ fn main() {
         Some("pause") => cli::pause(&args[2..]),
         Some("resume") => cli::resume(&args[2..]),
         Some("purge") => cli::purge(&args[2..]),
+        Some("setup") => setup::run(&args[2..]),
         Some("--version") | Some("-V") => cli::version(),
         Some("--help") | Some("-h") => cli::help(),
         _ => run(),

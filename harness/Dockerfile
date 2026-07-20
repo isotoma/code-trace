@@ -10,6 +10,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY tests ./tests
+# The binary embeds the agent plugin sources via include_str!, so they must be
+# present in the build context.
+COPY plugin ./plugin
 RUN cargo build --release --bin code-trace \
  && cargo build --release --bin fake-langfuse --features harness
 

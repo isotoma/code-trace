@@ -6,36 +6,6 @@ BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
-OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
-PI_EXTENSION_DIR="${HOME}/.pi/agent/extensions"
-
-# Where interactive prompts read from. Resolved once by resolve_tty_in; empty
-# until then, and empty means "no terminal — skip every prompt".
-TTY_IN=""
-
-# Resolve where interactive prompts should read from. Prefer stdin when it is a
-# TTY (e.g. `bash install.sh`); otherwise the controlling terminal, so a piped
-# install (curl | bash) — whose stdin is the script itself, not a TTY — can
-# still prompt without reading its own script text as the answer. Empty when no
-# terminal can be opened at all (CI/unattended): every prompt is then skipped
-# rather than consuming the piped script. Idempotent.
-resolve_tty_in() {
-  if [ -t 0 ]; then
-    TTY_IN="/dev/stdin"
-  elif { : < /dev/tty; } 2>/dev/null; then
-    TTY_IN="/dev/tty"
-  else
-    TTY_IN=""
-  fi
-}
-
-detect_opencode() {
-  [ -d "${HOME}/.config/opencode" ] || [ -f "${HOME}/.config/opencode/opencode.json" ]
-}
-
-detect_pi() {
-  [ -d "${HOME}/.pi/agent" ]
-}
 
 # Resolve platform target triple into the global TARGET.
 resolve_target() {
@@ -119,210 +89,51 @@ ensure_path() {
 
 # Register (or migrate) the code-trace Stop hook in a Claude Code settings file.
 #
-# Idempotent and self-healing: any pre-existing Stop hook that invokes code-trace
-# — whether by bare command, an absolute path, or the legacy
+# Delegates to the installed binary (`code-trace setup --register-hook`), which
+# owns the JSON logic: any pre-existing Stop hook that invokes code-trace —
+# whether by bare command, an absolute path, or the legacy
 # ~/.claude/hooks/code-trace layout — is normalised to the canonical PATH-based
-# `code-trace` command, and duplicates are collapsed to a single entry.
+# `code-trace` command, and duplicates are collapsed to a single entry. Keeping
+# this in the binary means it is unit-tested and needs no python3 interpreter.
 register_claude_code_hook() {
   local settings_file="${1:-${SETTINGS_FILE}}"
-  mkdir -p "$(dirname "${settings_file}")"
 
-  if python3 - "${settings_file}" <<'PYEOF'
-import json, os, sys
-
-path = sys.argv[1]
-CANONICAL = {"type": "command", "command": "code-trace"}
-
-
-def is_code_trace_command(cmd):
-    """True if a hook command invokes the code-trace binary in any form.
-
-    Matches the bare `code-trace`, an absolute/relative path such as
-    `~/.claude/hooks/code-trace` or `/usr/local/bin/code-trace`, and any of
-    these with trailing arguments.
-    """
-    if not isinstance(cmd, str):
-        return False
-    parts = cmd.strip().split()
-    if not parts:
-        return False
-    return os.path.basename(parts[0]) == "code-trace"
-
-
-try:
-    with open(path) as f:
-        settings = json.load(f)
-    if not isinstance(settings, dict):
-        settings = {}
-except FileNotFoundError:
-    settings = {}
-except json.JSONDecodeError:
-    sys.stderr.write("Existing settings file is not valid JSON; refusing to overwrite.\n")
-    sys.exit(1)
-
-hooks = settings.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    hooks = settings["hooks"] = {}
-
-stop = hooks.setdefault("Stop", [])
-if not isinstance(stop, list):
-    stop = hooks["Stop"] = []
-
-# Strip every existing code-trace hook from all Stop entries (migration + dedup).
-for entry in stop:
-    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
-        entry["hooks"] = [
-            h for h in entry["hooks"]
-            if not (isinstance(h, dict) and is_code_trace_command(h.get("command")))
-        ]
-
-# Add the canonical hook to the first matcher-style entry, or create one.
-for entry in stop:
-    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
-        entry["hooks"].append(dict(CANONICAL))
-        break
-else:
-    stop.append({"hooks": [dict(CANONICAL)]})
-
-with open(path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-PYEOF
-  then
-    echo "Registered code-trace Stop hook in ${settings_file}"
+  if "${INSTALL_DIR}/${BINARY}" setup --register-hook --settings-file "${settings_file}"; then
+    : # the binary prints its own confirmation line
   else
     echo "Could not update ${settings_file} — please add the hook manually" >&2
     return 1
   fi
 }
 
-# Resolve plugin/extension source paths into globals.
-resolve_plugin_sources() {
-  PLUGIN_SRC=""
-  if [ -f "${SCRIPT_DIR}/plugin/opencode/code-trace.ts" ]; then
-    PLUGIN_SRC="${SCRIPT_DIR}/plugin/opencode/code-trace.ts"
-  elif [ -f "${SCRIPT_DIR}/../plugin/opencode/code-trace.ts" ]; then
-    PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/opencode" && pwd)/code-trace.ts"
-  fi
-
-  PI_PLUGIN_SRC=""
-  if [ -f "${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts" ]; then
-    PI_PLUGIN_SRC="${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts"
-  elif [ -f "${SCRIPT_DIR}/../plugin/pi-agent/code-trace.ts" ]; then
-    PI_PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/pi-agent" && pwd)/code-trace.ts"
-  fi
-}
-
-# Install OpenCode plugin
-install_opencode_plugin() {
-  if [ -z "${PLUGIN_SRC}" ] || [ ! -f "${PLUGIN_SRC}" ]; then
-    echo ""
-    echo "Note: Plugin source not found at ${PLUGIN_SRC}. Skipping OpenCode plugin install."
-    echo "You can manually copy plugin/opencode/code-trace.ts to ${OPENCODE_PLUGIN_DIR}/"
-    return
-  fi
-
-  mkdir -p "${OPENCODE_PLUGIN_DIR}"
-  cp "${PLUGIN_SRC}" "${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-  echo "Installed OpenCode plugin to ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-}
-
-# Install Pi Agent extension
-install_pi_extension() {
-  if [ -z "${PI_PLUGIN_SRC}" ] || [ ! -f "${PI_PLUGIN_SRC}" ]; then
-    echo ""
-    echo "Note: Pi extension source not found at ${PI_PLUGIN_SRC}. Skipping Pi Agent extension install."
-    echo "You can manually copy plugin/pi-agent/code-trace.ts to ${PI_EXTENSION_DIR}/"
-    return
-  fi
-
-  mkdir -p "${PI_EXTENSION_DIR}"
-  cp "${PI_PLUGIN_SRC}" "${PI_EXTENSION_DIR}/code-trace.ts"
-  echo "Installed Pi Agent extension to ${PI_EXTENSION_DIR}/code-trace.ts"
-}
-
+# Install the OpenCode plugin (forced with --opencode, otherwise offered when
+# OpenCode is detected). The binary owns detection, the prompt, and the embedded
+# plugin source, so this works under curl | bash with no local checkout.
 maybe_install_opencode() {
   if [ "${INSTALL_OPENCODE}" = true ]; then
-    install_opencode_plugin
-  elif detect_opencode && [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "OpenCode detected. Install the code-trace plugin?"
-    echo "  ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-    echo ""
-    local reply=""
-    read -p "Install OpenCode plugin? [y/N] " -r reply < "${TTY_IN}" || reply=""
-    if [[ "${reply}" =~ ^[Yy]$ ]]; then
-      install_opencode_plugin
-    fi
+    "${INSTALL_DIR}/${BINARY}" setup --install-opencode || true
+  else
+    "${INSTALL_DIR}/${BINARY}" setup --offer-opencode || true
   fi
 }
 
+# Install the Pi Agent extension (forced with --pi, otherwise offered when Pi is
+# detected). As above, the binary owns detection, the prompt, and the source.
 maybe_install_pi() {
   if [ "${INSTALL_PI}" = true ]; then
-    install_pi_extension
-  elif detect_pi && [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "Pi Agent detected. Install the code-trace extension?"
-    echo "  ${PI_EXTENSION_DIR}/code-trace.ts"
-    echo ""
-    local reply=""
-    read -p "Install Pi Agent extension? [y/N] " -r reply < "${TTY_IN}" || reply=""
-    if [[ "${reply}" =~ ^[Yy]$ ]]; then
-      install_pi_extension
-    fi
+    "${INSTALL_DIR}/${BINARY}" setup --install-pi || true
+  else
+    "${INSTALL_DIR}/${BINARY}" setup --offer-pi || true
   fi
 }
 
-# Create config file if it does not already exist
+# Create the config file, via the binary. `setup --write-config` also offers to
+# set the Langfuse user id from your email; it reads the terminal itself, so a
+# piped curl | bash install can prompt without the shell consuming its script.
 create_config() {
-  local config_dir config_file
-  config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace"
-  config_file="${config_dir}/config"
+  local config_file="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace/config"
 
-  # Ask for an email to attach to traces as the Langfuse user id, unless one is
-  # already configured. Prompts read from TTY_IN (the controlling terminal for a
-  # piped curl | bash install), resolved here in case create_config is called on
-  # its own; empty means no terminal, so skip rather than consume the script.
-  local user_email=""
-  [ -n "${TTY_IN}" ] || resolve_tty_in
-
-  if grep -Eq '^[[:space:]]*LANGFUSE_USER_ID[[:space:]]*=' "${config_file}" 2>/dev/null; then
-    echo "LANGFUSE_USER_ID already configured in ${config_file} — leaving as-is"
-  elif [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "Optionally attach your email to traces as the Langfuse user id"
-    echo "(enables Langfuse's per-user views). Leave blank to skip."
-    read -p "Email [skip]: " -r user_email < "${TTY_IN}" || user_email=""
-    user_email="$(printf '%s' "${user_email}" | tr -d '[:space:]')"
-  fi
-
-  if [ -f "${config_file}" ]; then
-    echo "Config file already exists: ${config_file}"
-    if [ -n "${user_email}" ]; then
-      printf 'LANGFUSE_USER_ID=%s\n' "${user_email}" >> "${config_file}"
-      echo "Set LANGFUSE_USER_ID=${user_email} in ${config_file}"
-    fi
-  else
-    mkdir -p "${config_dir}"
-    cat > "${config_file}" << 'EOF'
-# code-trace configuration
-# Set TRACE_TO_LANGFUSE=true and add your Langfuse keys to enable tracing.
-TRACE_TO_LANGFUSE=false
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-# LANGFUSE_BASE_URL=https://cloud.langfuse.com
-EOF
-    if [ -n "${user_email}" ]; then
-      printf 'LANGFUSE_USER_ID=%s\n' "${user_email}" >> "${config_file}"
-    else
-      echo "# LANGFUSE_USER_ID=you@example.com" >> "${config_file}"
-    fi
-    echo "# CODE_TRACE_DEBUG=false" >> "${config_file}"
-    echo "Created config file: ${config_file}"
-    if [ -n "${user_email}" ]; then
-      echo "Set LANGFUSE_USER_ID=${user_email}"
-    fi
-  fi
+  "${INSTALL_DIR}/${BINARY}" setup --write-config || true
 
   echo ""
   echo "Done! Edit ${config_file} to enable tracing:"
@@ -343,12 +154,9 @@ main() {
     INSTALL_PI=true
   fi
 
-  resolve_tty_in
-
   resolve_target
   install_binary
   ensure_path
-  resolve_plugin_sources
 
   if ! register_claude_code_hook "${SETTINGS_FILE}"; then
     : # message already printed; do not abort the rest of the install
