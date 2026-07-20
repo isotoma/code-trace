@@ -83,10 +83,13 @@ TRACE_TO_LANGFUSE=true
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 # LANGFUSE_BASE_URL=https://cloud.langfuse.com
+# LANGFUSE_USER_ID=you@example.com
 # CODE_TRACE_DEBUG=false
 ```
 
 This file is read by the binary at startup and works the same regardless of which agent you're using.
+
+When run interactively, the install script offers to set `LANGFUSE_USER_ID` to your email (unless it is already configured); leave the prompt blank to skip.
 
 Respects `$XDG_CONFIG_HOME`: if set, the file is read from `$XDG_CONFIG_HOME/code-trace/config`.
 
@@ -147,6 +150,7 @@ Environment variables take precedence over the config file. This is useful for p
 | `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse public key |
 | `LANGFUSE_SECRET_KEY` | Yes | Langfuse secret key |
 | `LANGFUSE_BASE_URL` | No | Langfuse host (default: `https://cloud.langfuse.com`) |
+| `LANGFUSE_USER_ID` | No | User to attach to traces (typically your email); enables Langfuse's [user-scoped views](https://langfuse.com/docs/observability/features/users). Omitted when unset. |
 | `CODE_TRACE_DEBUG` | No | Set to `true` for debug logging (alias: `CC_TRACE_DEBUG`) |
 
 The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_LANGFUSE_PUBLIC_KEY`).

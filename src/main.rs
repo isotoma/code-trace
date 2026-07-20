@@ -59,6 +59,7 @@ fn run() -> i32 {
 
     let cwd = input.cwd().map(String::from);
     let env_tags = tags::gather_env_tags(source, cwd.as_deref(), input.agent_version());
+    let user_id = langfuse::user_id_from_env();
 
     let _lock = state::FileLock::acquire();
     let mut global_state = state::load_state();
@@ -141,6 +142,7 @@ fn run() -> i32 {
                     &transcript_path,
                     &env_tags,
                     source,
+                    user_id.as_deref(),
                 );
                 all_events.extend(events);
             }
@@ -201,6 +203,7 @@ fn run() -> i32 {
                     std::path::Path::new("opencode"),
                     &env_tags,
                     source,
+                    user_id.as_deref(),
                 );
                 all_events.extend(events);
             }
@@ -261,6 +264,7 @@ fn run() -> i32 {
                     std::path::Path::new("pi-agent"),
                     &env_tags,
                     source,
+                    user_id.as_deref(),
                 );
                 all_events.extend(events);
             }
