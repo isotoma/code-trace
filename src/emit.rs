@@ -63,6 +63,7 @@ pub fn build_ingestion_batch(
     transcript_path: &Path,
     tags: &[String],
     source: Source,
+    user_id: Option<&str>,
 ) -> Vec<Value> {
     let user_text_raw = transcript::extract_text(transcript::get_content(&turn.user_msg));
     let (user_text, user_text_meta) = truncate(&user_text_raw);
@@ -93,26 +94,32 @@ pub fn build_ingestion_batch(
     let mut events: Vec<Value> = Vec::new();
 
     // 1. trace-create
+    let mut trace_body = json!({
+        "id": trace_id,
+        "timestamp": now,
+        "name": format!("{} - Turn {turn_num}", source.trace_name_prefix()),
+        "sessionId": session_id,
+        "input": json!({"role": "user", "content": user_text}),
+        "output": json!({"role": "assistant", "content": assistant_text}),
+        "tags": tags,
+        "metadata": {
+            "source": source.as_str(),
+            "session_id": session_id,
+            "turn_number": turn_num,
+            "transcript_path": transcript_path.to_string_lossy(),
+            "user_text": user_text_meta,
+        },
+    });
+    // Omitted entirely when unconfigured so Langfuse leaves the trace unassigned
+    // rather than grouping every untagged run under an empty user.
+    if let Some(uid) = user_id {
+        trace_body["userId"] = json!(uid);
+    }
     events.push(json!({
         "id": uuid::Uuid::new_v4().to_string(),
         "type": "trace-create",
         "timestamp": now,
-        "body": {
-            "id": trace_id,
-            "timestamp": now,
-            "name": format!("{} - Turn {turn_num}", source.trace_name_prefix()),
-            "sessionId": session_id,
-            "input": json!({"role": "user", "content": user_text}),
-            "output": json!({"role": "assistant", "content": assistant_text}),
-            "tags": tags,
-            "metadata": {
-                "source": source.as_str(),
-                "session_id": session_id,
-                "turn_number": turn_num,
-                "transcript_path": transcript_path.to_string_lossy(),
-                "user_text": user_text_meta,
-            },
-        }
+        "body": trace_body,
     }));
 
     // 2. generation-create for the LLM response
@@ -313,7 +320,7 @@ mod tests {
     fn builds_trace_and_generation_events() {
         use crate::source::Source;
         let turn = make_simple_turn();
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0]["type"], "trace-create");
         assert_eq!(events[1]["type"], "generation-create");
@@ -324,7 +331,7 @@ mod tests {
         use crate::source::Source;
         let turn = make_simple_turn();
         let tags = vec!["claude-code".to_string(), "repo:myrepo".to_string()];
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &tags, Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &tags, Source::ClaudeCode, None);
         let trace_tags = events[0]["body"]["tags"].as_array().unwrap();
         assert_eq!(trace_tags.len(), 2);
         assert_eq!(trace_tags[0], "claude-code");
@@ -344,7 +351,7 @@ mod tests {
             ]}})],
             tool_results_by_id: tool_results,
         };
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
         assert_eq!(events.len(), 3);
         assert_eq!(events[2]["type"], "span-create");
         assert_eq!(events[2]["body"]["name"], "Tool: Bash");
@@ -354,7 +361,7 @@ mod tests {
     fn opencode_source_uses_correct_trace_name() {
         use crate::source::Source;
         let turn = make_simple_turn();
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["opencode".to_string()], Source::Opencode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["opencode".to_string()], Source::Opencode, None);
         assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
         assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
     }
@@ -363,7 +370,7 @@ mod tests {
     fn generation_event_has_no_usage_details_without_usage_block() {
         use crate::source::Source;
         let turn = make_simple_turn();
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
         assert!(events[1]["body"].get("usageDetails").is_none());
     }
 
@@ -389,7 +396,7 @@ mod tests {
             })],
             tool_results_by_id: HashMap::new(),
         };
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
         let usage = &events[1]["body"]["usageDetails"];
         assert_eq!(usage["input"], 10);
         assert_eq!(usage["output"], 20);
@@ -426,10 +433,26 @@ mod tests {
             ],
             tool_results_by_id: HashMap::new(),
         };
-        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
         let usage = &events[1]["body"]["usageDetails"];
         assert_eq!(usage["input"], 25);
         assert_eq!(usage["output"], 13);
+    }
+
+    #[test]
+    fn trace_event_carries_user_id_when_set() {
+        use crate::source::Source;
+        let turn = make_simple_turn();
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, Some("doug@example.com"));
+        assert_eq!(events[0]["body"]["userId"], "doug@example.com");
+    }
+
+    #[test]
+    fn trace_event_omits_user_id_when_unset() {
+        use crate::source::Source;
+        let turn = make_simple_turn();
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
+        assert!(events[0]["body"].get("userId").is_none());
     }
 
     #[test]

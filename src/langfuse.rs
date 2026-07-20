@@ -40,6 +40,23 @@ pub fn config_from_env() -> Option<LangfuseConfig> {
     })
 }
 
+/// The Langfuse user id to attach to traces, if configured.
+///
+/// Optional: when unset (or empty) traces carry no `userId` and Langfuse's
+/// user-scoped views simply won't group them. Typically an email address.
+/// Accepts the `CC_LANGFUSE_` prefix like the other Langfuse variables.
+pub fn user_id_from_env() -> Option<String> {
+    let raw = std::env::var("CC_LANGFUSE_USER_ID")
+        .or_else(|_| std::env::var("LANGFUSE_USER_ID"))
+        .unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn auth_header(config: &LangfuseConfig) -> String {
     let credentials = base64::engine::general_purpose::STANDARD
         .encode(format!("{}:{}", config.public_key, config.secret_key));

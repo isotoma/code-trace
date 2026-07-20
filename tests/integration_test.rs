@@ -23,6 +23,7 @@ fn end_to_end_simple_transcript() {
         transcript.path(),
         &tags,
         code_trace::source::Source::ClaudeCode,
+        None,
     );
 
     assert_eq!(events.len(), 2);
@@ -56,6 +57,7 @@ fn end_to_end_tool_transcript() {
         transcript.path(),
         &["claude-code".to_string()],
         code_trace::source::Source::ClaudeCode,
+        None,
     );
 
     assert_eq!(events.len(), 3);
@@ -98,6 +100,7 @@ fn end_to_end_opencode_transcript() {
         std::path::Path::new("opencode"),
         &tags,
         code_trace::source::Source::Opencode,
+        None,
     );
 
     assert_eq!(events.len(), 3);
@@ -144,6 +147,7 @@ fn end_to_end_pi_agent_transcript() {
         std::path::Path::new("pi-agent"),
         &tags,
         code_trace::source::Source::PiAgent,
+        None,
     );
 
     assert!(events.len() >= 2);
