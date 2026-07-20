@@ -154,6 +154,41 @@ fn with_appended_user_id(existing: &str, email: &str) -> String {
     out
 }
 
+// The agent plugin/extension sources are baked into the binary, so plugin
+// install works even under `curl | bash`, where there is no local checkout to
+// copy from.
+const OPENCODE_PLUGIN: &str = include_str!("../plugin/opencode/code-trace.ts");
+const PI_EXTENSION: &str = include_str!("../plugin/pi-agent/code-trace.ts");
+
+fn opencode_plugin_path(home: &Path) -> PathBuf {
+    home.join(".config/opencode/plugins/code-trace.ts")
+}
+
+fn pi_extension_path(home: &Path) -> PathBuf {
+    home.join(".pi/agent/extensions/code-trace.ts")
+}
+
+/// OpenCode is considered present if its config directory (or config file)
+/// exists under `home`.
+fn opencode_detected(home: &Path) -> bool {
+    home.join(".config/opencode").is_dir() || home.join(".config/opencode/opencode.json").is_file()
+}
+
+/// Pi is considered present if its agent directory exists under `home`.
+fn pi_detected(home: &Path) -> bool {
+    home.join(".pi/agent").is_dir()
+}
+
+/// Write `contents` to `target`, creating parent directories as needed.
+fn install_plugin(target: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(target, contents)
+        .map_err(|e| format!("could not write {}: {e}", target.display()))
+}
+
 /// Read the settings file (treating a missing file as empty), register the
 /// canonical hook, and write it back with 2-space indentation. Refuses to
 /// overwrite a file whose existing contents are not valid JSON.
@@ -278,11 +313,68 @@ pub fn write_config(
     Ok(())
 }
 
+fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "~".to_string()))
+}
+
+/// Ask a yes/no question on the terminal. None when no terminal is available;
+/// otherwise true only for an exact `y`/`Y`, matching the previous shell prompt.
+fn prompt_yes_no(question: &str) -> Option<bool> {
+    use std::io::Write;
+    eprint!("{question}");
+    let _ = std::io::stderr().flush();
+    let line = read_terminal_line()?;
+    let answer = line.trim();
+    Some(answer == "y" || answer == "Y")
+}
+
+/// Install an agent plugin/extension, either forced or offered (detected +
+/// confirmed at the prompt). Returns a process exit code (0 = success/skipped).
+fn offer_or_install(
+    force: bool,
+    detected: bool,
+    target: &Path,
+    contents: &str,
+    detected_line: &str,
+    question: &str,
+    installed_line: &str,
+) -> i32 {
+    let should_install = if force {
+        true
+    } else if detected {
+        println!();
+        println!("{detected_line}");
+        println!("  {}", target.display());
+        matches!(prompt_yes_no(question), Some(true))
+    } else {
+        false
+    };
+
+    if !should_install {
+        return 0;
+    }
+
+    match install_plugin(target, contents) {
+        Ok(()) => {
+            println!("{installed_line} {}", target.display());
+            0
+        }
+        Err(msg) => {
+            eprintln!("{msg}");
+            1
+        }
+    }
+}
+
 /// `code-trace setup` entry point. `args` is everything after `setup`.
 pub fn run(args: &[String]) -> i32 {
     let mut register = false;
     let mut write = false;
     let mut no_prompt = false;
+    let mut install_opencode = false;
+    let mut offer_opencode = false;
+    let mut install_pi = false;
+    let mut offer_pi = false;
     let mut settings_path: Option<PathBuf> = None;
     let mut config_path: Option<PathBuf> = None;
     let mut user_email: Option<String> = None;
@@ -293,6 +385,10 @@ pub fn run(args: &[String]) -> i32 {
             "--register-hook" => register = true,
             "--write-config" => write = true,
             "--no-prompt" => no_prompt = true,
+            "--install-opencode" => install_opencode = true,
+            "--offer-opencode" => offer_opencode = true,
+            "--install-pi" => install_pi = true,
+            "--offer-pi" => offer_pi = true,
             "--settings-file" => {
                 i += 1;
                 match args.get(i) {
@@ -331,12 +427,18 @@ pub fn run(args: &[String]) -> i32 {
         i += 1;
     }
 
-    if !register && !write {
-        eprintln!("setup: nothing to do (expected --register-hook and/or --write-config)");
+    let any_action =
+        register || write || install_opencode || offer_opencode || install_pi || offer_pi;
+    if !any_action {
+        eprintln!(
+            "setup: nothing to do (expected one of --register-hook, --write-config, \
+             --install-opencode, --offer-opencode, --install-pi, --offer-pi)"
+        );
         return 2;
     }
 
     let mut code = 0;
+    let home = home_dir();
 
     if register {
         let path = settings_path.unwrap_or_else(default_settings_path);
@@ -347,6 +449,30 @@ pub fn run(args: &[String]) -> i32 {
                 code = 1;
             }
         }
+    }
+
+    if install_opencode || offer_opencode {
+        code |= offer_or_install(
+            install_opencode,
+            opencode_detected(&home),
+            &opencode_plugin_path(&home),
+            OPENCODE_PLUGIN,
+            "OpenCode detected. Install the code-trace plugin?",
+            "Install OpenCode plugin? [y/N] ",
+            "Installed OpenCode plugin to",
+        );
+    }
+
+    if install_pi || offer_pi {
+        code |= offer_or_install(
+            install_pi,
+            pi_detected(&home),
+            &pi_extension_path(&home),
+            PI_EXTENSION,
+            "Pi Agent detected. Install the code-trace extension?",
+            "Install Pi Agent extension? [y/N] ",
+            "Installed Pi Agent extension to",
+        );
     }
 
     if write {
@@ -570,5 +696,59 @@ mod tests {
         let out = with_appended_user_id("TRACE_TO_LANGFUSE=true", "me@example.com");
         assert!(out.contains("TRACE_TO_LANGFUSE=true\nLANGFUSE_USER_ID=me@example.com\n"));
         assert!(config_has_user_id(&out));
+    }
+
+    // --- plugin install ---
+
+    /// A unique empty temp directory for a test.
+    fn temp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("code-trace-ut-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn embedded_plugin_sources_are_present() {
+        assert!(!OPENCODE_PLUGIN.is_empty());
+        assert!(!PI_EXTENSION.is_empty());
+        assert!(OPENCODE_PLUGIN.contains("code-trace"));
+        assert!(PI_EXTENSION.contains("code-trace"));
+    }
+
+    #[test]
+    fn plugin_paths_are_under_home() {
+        assert_eq!(
+            opencode_plugin_path(Path::new("/home/x")),
+            Path::new("/home/x/.config/opencode/plugins/code-trace.ts")
+        );
+        assert_eq!(
+            pi_extension_path(Path::new("/home/x")),
+            Path::new("/home/x/.pi/agent/extensions/code-trace.ts")
+        );
+    }
+
+    #[test]
+    fn opencode_detected_only_when_config_dir_exists() {
+        let home = temp_home("oc-detect");
+        assert!(!opencode_detected(&home));
+        std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+        assert!(opencode_detected(&home));
+    }
+
+    #[test]
+    fn pi_detected_only_when_agent_dir_exists() {
+        let home = temp_home("pi-detect");
+        assert!(!pi_detected(&home));
+        std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        assert!(pi_detected(&home));
+    }
+
+    #[test]
+    fn install_plugin_creates_parents_and_writes_contents() {
+        let home = temp_home("install");
+        let target = home.join(".config/opencode/plugins/code-trace.ts");
+        install_plugin(&target, "hello world").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello world");
     }
 }

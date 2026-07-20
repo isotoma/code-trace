@@ -6,36 +6,6 @@ BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
-OPENCODE_PLUGIN_DIR="${HOME}/.config/opencode/plugins"
-PI_EXTENSION_DIR="${HOME}/.pi/agent/extensions"
-
-# Where interactive prompts read from. Resolved once by resolve_tty_in; empty
-# until then, and empty means "no terminal — skip every prompt".
-TTY_IN=""
-
-# Resolve where interactive prompts should read from. Prefer stdin when it is a
-# TTY (e.g. `bash install.sh`); otherwise the controlling terminal, so a piped
-# install (curl | bash) — whose stdin is the script itself, not a TTY — can
-# still prompt without reading its own script text as the answer. Empty when no
-# terminal can be opened at all (CI/unattended): every prompt is then skipped
-# rather than consuming the piped script. Idempotent.
-resolve_tty_in() {
-  if [ -t 0 ]; then
-    TTY_IN="/dev/stdin"
-  elif { : < /dev/tty; } 2>/dev/null; then
-    TTY_IN="/dev/tty"
-  else
-    TTY_IN=""
-  fi
-}
-
-detect_opencode() {
-  [ -d "${HOME}/.config/opencode" ] || [ -f "${HOME}/.config/opencode/opencode.json" ]
-}
-
-detect_pi() {
-  [ -d "${HOME}/.pi/agent" ]
-}
 
 # Resolve platform target triple into the global TARGET.
 resolve_target() {
@@ -136,80 +106,24 @@ register_claude_code_hook() {
   fi
 }
 
-# Resolve plugin/extension source paths into globals.
-resolve_plugin_sources() {
-  PLUGIN_SRC=""
-  if [ -f "${SCRIPT_DIR}/plugin/opencode/code-trace.ts" ]; then
-    PLUGIN_SRC="${SCRIPT_DIR}/plugin/opencode/code-trace.ts"
-  elif [ -f "${SCRIPT_DIR}/../plugin/opencode/code-trace.ts" ]; then
-    PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/opencode" && pwd)/code-trace.ts"
-  fi
-
-  PI_PLUGIN_SRC=""
-  if [ -f "${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts" ]; then
-    PI_PLUGIN_SRC="${SCRIPT_DIR}/plugin/pi-agent/code-trace.ts"
-  elif [ -f "${SCRIPT_DIR}/../plugin/pi-agent/code-trace.ts" ]; then
-    PI_PLUGIN_SRC="$(cd "${SCRIPT_DIR}/../plugin/pi-agent" && pwd)/code-trace.ts"
-  fi
-}
-
-# Install OpenCode plugin
-install_opencode_plugin() {
-  if [ -z "${PLUGIN_SRC}" ] || [ ! -f "${PLUGIN_SRC}" ]; then
-    echo ""
-    echo "Note: Plugin source not found at ${PLUGIN_SRC}. Skipping OpenCode plugin install."
-    echo "You can manually copy plugin/opencode/code-trace.ts to ${OPENCODE_PLUGIN_DIR}/"
-    return
-  fi
-
-  mkdir -p "${OPENCODE_PLUGIN_DIR}"
-  cp "${PLUGIN_SRC}" "${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-  echo "Installed OpenCode plugin to ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-}
-
-# Install Pi Agent extension
-install_pi_extension() {
-  if [ -z "${PI_PLUGIN_SRC}" ] || [ ! -f "${PI_PLUGIN_SRC}" ]; then
-    echo ""
-    echo "Note: Pi extension source not found at ${PI_PLUGIN_SRC}. Skipping Pi Agent extension install."
-    echo "You can manually copy plugin/pi-agent/code-trace.ts to ${PI_EXTENSION_DIR}/"
-    return
-  fi
-
-  mkdir -p "${PI_EXTENSION_DIR}"
-  cp "${PI_PLUGIN_SRC}" "${PI_EXTENSION_DIR}/code-trace.ts"
-  echo "Installed Pi Agent extension to ${PI_EXTENSION_DIR}/code-trace.ts"
-}
-
+# Install the OpenCode plugin (forced with --opencode, otherwise offered when
+# OpenCode is detected). The binary owns detection, the prompt, and the embedded
+# plugin source, so this works under curl | bash with no local checkout.
 maybe_install_opencode() {
   if [ "${INSTALL_OPENCODE}" = true ]; then
-    install_opencode_plugin
-  elif detect_opencode && [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "OpenCode detected. Install the code-trace plugin?"
-    echo "  ${OPENCODE_PLUGIN_DIR}/code-trace.ts"
-    echo ""
-    local reply=""
-    read -p "Install OpenCode plugin? [y/N] " -r reply < "${TTY_IN}" || reply=""
-    if [[ "${reply}" =~ ^[Yy]$ ]]; then
-      install_opencode_plugin
-    fi
+    "${INSTALL_DIR}/${BINARY}" setup --install-opencode || true
+  else
+    "${INSTALL_DIR}/${BINARY}" setup --offer-opencode || true
   fi
 }
 
+# Install the Pi Agent extension (forced with --pi, otherwise offered when Pi is
+# detected). As above, the binary owns detection, the prompt, and the source.
 maybe_install_pi() {
   if [ "${INSTALL_PI}" = true ]; then
-    install_pi_extension
-  elif detect_pi && [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "Pi Agent detected. Install the code-trace extension?"
-    echo "  ${PI_EXTENSION_DIR}/code-trace.ts"
-    echo ""
-    local reply=""
-    read -p "Install Pi Agent extension? [y/N] " -r reply < "${TTY_IN}" || reply=""
-    if [[ "${reply}" =~ ^[Yy]$ ]]; then
-      install_pi_extension
-    fi
+    "${INSTALL_DIR}/${BINARY}" setup --install-pi || true
+  else
+    "${INSTALL_DIR}/${BINARY}" setup --offer-pi || true
   fi
 }
 
@@ -240,12 +154,9 @@ main() {
     INSTALL_PI=true
   fi
 
-  resolve_tty_in
-
   resolve_target
   install_binary
   ensure_path
-  resolve_plugin_sources
 
   if ! register_claude_code_hook "${SETTINGS_FILE}"; then
     : # message already printed; do not abort the rest of the install

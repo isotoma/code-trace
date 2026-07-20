@@ -216,3 +216,61 @@ fn write_config_existing_file_without_email_is_noop() {
     assert!(write_config(&file, &["--no-prompt"]).status.success());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
 }
+
+// --- setup plugin install ---
+
+/// Run `setup` with `$HOME` pointed at an isolated directory, so plugin paths
+/// and agent detection resolve under the scratch dir.
+fn setup_with_home(home: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(BIN)
+        .arg("setup")
+        .args(args)
+        .env("HOME", home)
+        .output()
+        .expect("failed to run code-trace setup")
+}
+
+fn repo_file(rel: &str) -> String {
+    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel))
+        .expect("read repo plugin source")
+}
+
+#[test]
+fn install_opencode_writes_embedded_plugin() {
+    let home = scratch("oc-install");
+    assert!(setup_with_home(&home, &["--install-opencode"]).status.success());
+    let installed = home.join(".config/opencode/plugins/code-trace.ts");
+    assert_eq!(
+        std::fs::read_to_string(&installed).unwrap(),
+        repo_file("plugin/opencode/code-trace.ts"),
+        "installed plugin must match the repo source embedded in the binary"
+    );
+}
+
+#[test]
+fn install_pi_writes_embedded_extension() {
+    let home = scratch("pi-install");
+    assert!(setup_with_home(&home, &["--install-pi"]).status.success());
+    let installed = home.join(".pi/agent/extensions/code-trace.ts");
+    assert_eq!(
+        std::fs::read_to_string(&installed).unwrap(),
+        repo_file("plugin/pi-agent/code-trace.ts")
+    );
+}
+
+#[test]
+fn offer_opencode_skips_when_not_detected() {
+    let home = scratch("oc-offer-absent");
+    assert!(setup_with_home(&home, &["--offer-opencode"]).status.success());
+    assert!(
+        !home.join(".config/opencode/plugins/code-trace.ts").exists(),
+        "must not install when OpenCode is not detected (no prompt)"
+    );
+}
+
+#[test]
+fn offer_pi_skips_when_not_detected() {
+    let home = scratch("pi-offer-absent");
+    assert!(setup_with_home(&home, &["--offer-pi"]).status.success());
+    assert!(!home.join(".pi/agent/extensions/code-trace.ts").exists());
+}
