@@ -74,6 +74,19 @@ pub fn build_ingestion_batch(
     let model = transcript::get_model(&turn.assistant_msgs[0]);
     let tool_calls = tool_calls_from_assistants(&turn.assistant_msgs);
 
+    // A turn can hold several assistant messages (e.g. a tool-call loop before
+    // the final answer); each carries its own per-call usage, so sum across
+    // all of them rather than taking just the first.
+    let total_usage = turn.assistant_msgs.iter().fold(
+        None::<transcript::Usage>,
+        |acc, m| match (acc, transcript::get_usage(m)) {
+            (None, None) => None,
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (Some(a), Some(b)) => Some(a + b),
+        },
+    );
+
     let trace_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -104,24 +117,47 @@ pub fn build_ingestion_batch(
 
     // 2. generation-create for the LLM response
     let gen_id = uuid::Uuid::new_v4().to_string();
+    let mut gen_body = serde_json::Map::new();
+    gen_body.insert("id".to_string(), json!(gen_id));
+    gen_body.insert("traceId".to_string(), json!(trace_id));
+    gen_body.insert("name".to_string(), json!("Claude Response"));
+    gen_body.insert("startTime".to_string(), json!(now));
+    gen_body.insert("endTime".to_string(), json!(now));
+    gen_body.insert("model".to_string(), json!(model));
+    gen_body.insert(
+        "input".to_string(),
+        json!({"role": "user", "content": user_text}),
+    );
+    gen_body.insert(
+        "output".to_string(),
+        json!({"role": "assistant", "content": assistant_text}),
+    );
+    gen_body.insert(
+        "metadata".to_string(),
+        json!({
+            "assistant_text": assistant_text_meta,
+            "tool_count": tool_calls.len(),
+        }),
+    );
+    // Omitted entirely (not zero-filled) when the turn has no usage data at
+    // all, so Langfuse never prices a generation at $0 for a source that
+    // simply doesn't report usage.
+    if let Some(usage) = total_usage {
+        gen_body.insert(
+            "usageDetails".to_string(),
+            json!({
+                "input": usage.input_tokens,
+                "output": usage.output_tokens,
+                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                "cache_read_input_tokens": usage.cache_read_input_tokens,
+            }),
+        );
+    }
     events.push(json!({
         "id": uuid::Uuid::new_v4().to_string(),
         "type": "generation-create",
         "timestamp": now,
-        "body": {
-            "id": gen_id,
-            "traceId": trace_id,
-            "name": "Claude Response",
-            "startTime": now,
-            "endTime": now,
-            "model": model,
-            "input": json!({"role": "user", "content": user_text}),
-            "output": json!({"role": "assistant", "content": assistant_text}),
-            "metadata": {
-                "assistant_text": assistant_text_meta,
-                "tool_count": tool_calls.len(),
-            },
-        }
+        "body": Value::Object(gen_body),
     }));
 
     // 3. span-create for each tool call
@@ -321,6 +357,79 @@ mod tests {
         let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["opencode".to_string()], Source::Opencode);
         assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
         assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
+    }
+
+    #[test]
+    fn generation_event_has_no_usage_details_without_usage_block() {
+        use crate::source::Source;
+        let turn = make_simple_turn();
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        assert!(events[1]["body"].get("usageDetails").is_none());
+    }
+
+    #[test]
+    fn generation_event_carries_usage_details() {
+        use crate::source::Source;
+        let turn = Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":"Hello"}}),
+            assistant_msgs: vec![json!({
+                "type":"assistant",
+                "message":{
+                    "id":"m1",
+                    "role":"assistant",
+                    "model":"claude-sonnet-4-20250514",
+                    "content":[{"type":"text","text":"Hi there"}],
+                    "usage":{
+                        "input_tokens":10,
+                        "output_tokens":20,
+                        "cache_creation_input_tokens":5,
+                        "cache_read_input_tokens":3,
+                    },
+                }
+            })],
+            tool_results_by_id: HashMap::new(),
+        };
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let usage = &events[1]["body"]["usageDetails"];
+        assert_eq!(usage["input"], 10);
+        assert_eq!(usage["output"], 20);
+        assert_eq!(usage["cache_creation_input_tokens"], 5);
+        assert_eq!(usage["cache_read_input_tokens"], 3);
+    }
+
+    #[test]
+    fn generation_event_sums_usage_across_assistant_messages() {
+        use crate::source::Source;
+        let turn = Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":"Do something"}}),
+            assistant_msgs: vec![
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m1",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}],
+                        "usage":{"input_tokens":10,"output_tokens":5},
+                    }
+                }),
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m2",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"text","text":"Done"}],
+                        "usage":{"input_tokens":15,"output_tokens":8},
+                    }
+                }),
+            ],
+            tool_results_by_id: HashMap::new(),
+        };
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode);
+        let usage = &events[1]["body"]["usageDetails"];
+        assert_eq!(usage["input"], 25);
+        assert_eq!(usage["output"], 13);
     }
 
     #[test]
