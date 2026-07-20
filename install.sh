@@ -258,16 +258,25 @@ create_config() {
   config_file="${config_dir}/config"
 
   # Ask for an email to attach to traces as the Langfuse user id, unless one is
-  # already configured. Only prompt on an interactive terminal — a piped install
-  # (curl | sh) has no TTY on stdin, so we skip rather than consume the script.
-  local user_email=""
+  # already configured. Read the prompt from the controlling terminal rather
+  # than stdin, so a piped install (curl | bash) — whose stdin is the script
+  # itself, not a TTY — can still prompt. Skip only when no terminal can be
+  # opened at all (e.g. CI), so unattended installs neither hang nor consume
+  # the piped script.
+  local user_email="" tty_in=""
+  if [ -t 0 ]; then
+    tty_in="/dev/stdin"
+  elif { : < /dev/tty; } 2>/dev/null; then
+    tty_in="/dev/tty"
+  fi
+
   if grep -Eq '^[[:space:]]*LANGFUSE_USER_ID[[:space:]]*=' "${config_file}" 2>/dev/null; then
     echo "LANGFUSE_USER_ID already configured in ${config_file} — leaving as-is"
-  elif [ -t 0 ]; then
+  elif [ -n "${tty_in}" ]; then
     echo ""
     echo "Optionally attach your email to traces as the Langfuse user id"
     echo "(enables Langfuse's per-user views). Leave blank to skip."
-    read -p "Email [skip]: " -r user_email || user_email=""
+    read -p "Email [skip]: " -r user_email < "${tty_in}" || user_email=""
     user_email="$(printf '%s' "${user_email}" | tr -d '[:space:]')"
   fi
 
