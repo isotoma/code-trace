@@ -6,7 +6,7 @@ use tempfile::NamedTempFile;
 fn end_to_end_simple_transcript() {
     let mut transcript = NamedTempFile::new().unwrap();
     writeln!(transcript, r#"{{"type":"user","message":{{"role":"user","content":"Hello"}}}}"#).unwrap();
-    writeln!(transcript, r#"{{"type":"assistant","message":{{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-20250514","content":[{{"type":"text","text":"Hi there!"}}]}}}}"#).unwrap();
+    writeln!(transcript, r#"{{"type":"assistant","message":{{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-20250514","content":[{{"type":"text","text":"Hi there!"}}],"usage":{{"input_tokens":12,"output_tokens":34,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}}}}"#).unwrap();
 
     let mut ss = code_trace::state::SessionState::default();
     let msgs = code_trace::transcript::read_new_jsonl(transcript.path(), &mut ss);
@@ -31,6 +31,8 @@ fn end_to_end_simple_transcript() {
     assert_eq!(events[0]["body"]["sessionId"], "test-session");
     assert_eq!(events[1]["type"], "generation-create");
     assert_eq!(events[1]["body"]["model"], "claude-sonnet-4-20250514");
+    assert_eq!(events[1]["body"]["usageDetails"]["input"], 12);
+    assert_eq!(events[1]["body"]["usageDetails"]["output"], 34);
 }
 
 #[test]
@@ -102,6 +104,8 @@ fn end_to_end_opencode_transcript() {
     assert_eq!(events[0]["type"], "trace-create");
     assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
     assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
+    // OpenCode messages don't carry usage data through normalization yet.
+    assert!(events[1]["body"].get("usageDetails").is_none());
 }
 
 #[test]

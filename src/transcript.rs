@@ -89,6 +89,49 @@ pub fn get_model(msg: &Value) -> &str {
         .unwrap_or("claude")
 }
 
+/// Token usage for one assistant message, mirroring Claude Code's
+/// `message.usage` block.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+}
+
+impl std::ops::Add for Usage {
+    type Output = Usage;
+
+    fn add(self, other: Usage) -> Usage {
+        Usage {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens
+                + other.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
+        }
+    }
+}
+
+/// Get message.usage (token counts Claude Code reports for one API call).
+/// Returns None when the message has no usage block at all, distinguishing
+/// "no usage data" from "zero usage".
+pub fn get_usage(msg: &Value) -> Option<Usage> {
+    let u = msg.get("message")?.get("usage")?;
+    Some(Usage {
+        input_tokens: u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
+        output_tokens: u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0),
+        cache_creation_input_tokens: u
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        cache_read_input_tokens: u
+            .get("cache_read_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    })
+}
+
 /// Extract plain text from content (string or array of text blocks).
 pub fn extract_text(content: Option<&Value>) -> String {
     let Some(c) = content else {
@@ -199,6 +242,37 @@ mod tests {
             {"type": "text", "text": "World"}
         ]);
         assert_eq!(extract_text(Some(&v)), "Hello\nWorld");
+    }
+
+    #[test]
+    fn get_usage_reads_full_block() {
+        let v: Value = serde_json::from_str(
+            r#"{"message":{"role":"assistant","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":5,"cache_read_input_tokens":3}}}"#,
+        )
+        .unwrap();
+        let usage = get_usage(&v).unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
+        assert_eq!(usage.cache_creation_input_tokens, 5);
+        assert_eq!(usage.cache_read_input_tokens, 3);
+    }
+
+    #[test]
+    fn get_usage_missing_fields_default_to_zero() {
+        let v: Value =
+            serde_json::from_str(r#"{"message":{"role":"assistant","usage":{"input_tokens":10}}}"#)
+                .unwrap();
+        let usage = get_usage(&v).unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_creation_input_tokens, 0);
+        assert_eq!(usage.cache_read_input_tokens, 0);
+    }
+
+    #[test]
+    fn get_usage_absent_block_returns_none() {
+        let v: Value = serde_json::from_str(r#"{"message":{"role":"assistant"}}"#).unwrap();
+        assert!(get_usage(&v).is_none());
     }
 
     #[test]
