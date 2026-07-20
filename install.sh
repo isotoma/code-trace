@@ -119,77 +119,17 @@ ensure_path() {
 
 # Register (or migrate) the code-trace Stop hook in a Claude Code settings file.
 #
-# Idempotent and self-healing: any pre-existing Stop hook that invokes code-trace
-# — whether by bare command, an absolute path, or the legacy
+# Delegates to the installed binary (`code-trace setup --register-hook`), which
+# owns the JSON logic: any pre-existing Stop hook that invokes code-trace —
+# whether by bare command, an absolute path, or the legacy
 # ~/.claude/hooks/code-trace layout — is normalised to the canonical PATH-based
-# `code-trace` command, and duplicates are collapsed to a single entry.
+# `code-trace` command, and duplicates are collapsed to a single entry. Keeping
+# this in the binary means it is unit-tested and needs no python3 interpreter.
 register_claude_code_hook() {
   local settings_file="${1:-${SETTINGS_FILE}}"
-  mkdir -p "$(dirname "${settings_file}")"
 
-  if python3 - "${settings_file}" <<'PYEOF'
-import json, os, sys
-
-path = sys.argv[1]
-CANONICAL = {"type": "command", "command": "code-trace"}
-
-
-def is_code_trace_command(cmd):
-    """True if a hook command invokes the code-trace binary in any form.
-
-    Matches the bare `code-trace`, an absolute/relative path such as
-    `~/.claude/hooks/code-trace` or `/usr/local/bin/code-trace`, and any of
-    these with trailing arguments.
-    """
-    if not isinstance(cmd, str):
-        return False
-    parts = cmd.strip().split()
-    if not parts:
-        return False
-    return os.path.basename(parts[0]) == "code-trace"
-
-
-try:
-    with open(path) as f:
-        settings = json.load(f)
-    if not isinstance(settings, dict):
-        settings = {}
-except FileNotFoundError:
-    settings = {}
-except json.JSONDecodeError:
-    sys.stderr.write("Existing settings file is not valid JSON; refusing to overwrite.\n")
-    sys.exit(1)
-
-hooks = settings.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    hooks = settings["hooks"] = {}
-
-stop = hooks.setdefault("Stop", [])
-if not isinstance(stop, list):
-    stop = hooks["Stop"] = []
-
-# Strip every existing code-trace hook from all Stop entries (migration + dedup).
-for entry in stop:
-    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
-        entry["hooks"] = [
-            h for h in entry["hooks"]
-            if not (isinstance(h, dict) and is_code_trace_command(h.get("command")))
-        ]
-
-# Add the canonical hook to the first matcher-style entry, or create one.
-for entry in stop:
-    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
-        entry["hooks"].append(dict(CANONICAL))
-        break
-else:
-    stop.append({"hooks": [dict(CANONICAL)]})
-
-with open(path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-PYEOF
-  then
-    echo "Registered code-trace Stop hook in ${settings_file}"
+  if "${INSTALL_DIR}/${BINARY}" setup --register-hook --settings-file "${settings_file}"; then
+    : # the binary prints its own confirmation line
   else
     echo "Could not update ${settings_file} — please add the hook manually" >&2
     return 1
