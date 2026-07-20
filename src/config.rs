@@ -22,7 +22,7 @@ fn parse_config_file(path: &std::path::Path) -> HashMap<String, String> {
     parse_config_str(&content)
 }
 
-fn parse_config_str(content: &str) -> HashMap<String, String> {
+pub fn parse_config_str(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in content.lines() {
         let line = line.trim();

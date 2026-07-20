@@ -82,6 +82,78 @@ fn default_settings_path() -> PathBuf {
     PathBuf::from(home).join(".claude").join("settings.json")
 }
 
+fn default_config_path() -> PathBuf {
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+            PathBuf::from(home).join(".config")
+        });
+    base.join("code-trace").join("config")
+}
+
+/// True if the config text has an active (uncommented) `LANGFUSE_USER_ID`
+/// setting. Uses the same parser the binary reads config with at runtime, so a
+/// commented `# LANGFUSE_USER_ID=...` placeholder does not count.
+pub fn config_has_user_id(contents: &str) -> bool {
+    crate::config::parse_config_str(contents).contains_key("LANGFUSE_USER_ID")
+}
+
+/// What writing the config should do, given the current file contents (None if
+/// the file is absent) and a resolved email (None to leave the id unset).
+#[derive(Debug, PartialEq, Eq)]
+enum WriteAction {
+    /// An active LANGFUSE_USER_ID is already present; leave the file untouched.
+    AlreadyConfigured,
+    /// No file yet — create it from the template, with the email if given.
+    Create(Option<String>),
+    /// File exists without a user id and an email was given — append it.
+    AppendEmail(String),
+    /// File exists without a user id and no email was given — nothing to do.
+    ExistsNoChange,
+}
+
+fn decide_write(existing: Option<&str>, email: Option<&str>) -> WriteAction {
+    match existing {
+        None => WriteAction::Create(email.map(str::to_string)),
+        Some(contents) if config_has_user_id(contents) => WriteAction::AlreadyConfigured,
+        Some(_) => match email {
+            Some(e) => WriteAction::AppendEmail(e.to_string()),
+            None => WriteAction::ExistsNoChange,
+        },
+    }
+}
+
+/// Full contents of a freshly created config file.
+fn fresh_config(email: Option<&str>) -> String {
+    let user_id_line = match email {
+        Some(e) => format!("LANGFUSE_USER_ID={e}"),
+        None => "# LANGFUSE_USER_ID=you@example.com".to_string(),
+    };
+    format!(
+        "# code-trace configuration
+# Set TRACE_TO_LANGFUSE=true and add your Langfuse keys to enable tracing.
+TRACE_TO_LANGFUSE=false
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+# LANGFUSE_BASE_URL=https://cloud.langfuse.com
+{user_id_line}
+# CODE_TRACE_DEBUG=false
+"
+    )
+}
+
+/// `existing` with an active LANGFUSE_USER_ID line appended, inserting a
+/// separating newline first if the file did not already end with one.
+fn with_appended_user_id(existing: &str, email: &str) -> String {
+    let mut out = existing.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!("LANGFUSE_USER_ID={email}\n"));
+    out
+}
+
 /// Read the settings file (treating a missing file as empty), register the
 /// canonical hook, and write it back with 2-space indentation. Refuses to
 /// overwrite a file whose existing contents are not valid JSON.
@@ -107,20 +179,146 @@ pub fn register_hook(settings_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a line from the controlling terminal: stdin when it is a TTY (e.g.
+/// `bash install.sh`), else `/dev/tty` (so a piped `curl | bash` install can
+/// still prompt), else None when no terminal exists. Because this runs in the
+/// binary — a separate process from the installer — reading the terminal never
+/// consumes the piped install script, unlike a shell `read` from stdin.
+fn read_terminal_line() -> Option<String> {
+    use std::io::{BufRead, IsTerminal};
+    if std::io::stdin().is_terminal() {
+        let mut s = String::new();
+        std::io::stdin().lock().read_line(&mut s).ok()?;
+        Some(s)
+    } else if let Ok(tty) = std::fs::File::open("/dev/tty") {
+        let mut s = String::new();
+        std::io::BufReader::new(tty).read_line(&mut s).ok()?;
+        Some(s)
+    } else {
+        None
+    }
+}
+
+/// Prompt for an email to use as the Langfuse user id. None if no terminal is
+/// available or the answer is blank. Whitespace is stripped entirely, matching
+/// the previous shell prompt's `tr -d`.
+fn prompt_email() -> Option<String> {
+    use std::io::Write;
+    eprintln!();
+    eprintln!("Optionally attach your email to traces as the Langfuse user id");
+    eprintln!("(enables Langfuse's per-user views). Leave blank to skip.");
+    eprint!("Email [skip]: ");
+    let _ = std::io::stderr().flush();
+
+    let line = read_terminal_line()?;
+    let stripped: String = line.split_whitespace().collect();
+    if stripped.is_empty() {
+        None
+    } else {
+        Some(stripped)
+    }
+}
+
+/// Create or update the config file, attaching `explicit_email` as the Langfuse
+/// user id — or, when none is given and `allow_prompt` is set, whatever the
+/// interactive prompt returns. An already-configured user id is left untouched.
+pub fn write_config(
+    config_path: &Path,
+    explicit_email: Option<&str>,
+    allow_prompt: bool,
+) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(config_path) {
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("could not read {}: {e}", config_path.display())),
+    };
+
+    let already_configured = existing.as_deref().is_some_and(config_has_user_id);
+
+    // Resolve the email: an explicit value wins; otherwise prompt only when a
+    // user id is not already set and prompting is allowed.
+    let email: Option<String> = if already_configured {
+        None
+    } else if let Some(e) = explicit_email {
+        let stripped: String = e.split_whitespace().collect();
+        (!stripped.is_empty()).then_some(stripped)
+    } else if allow_prompt {
+        prompt_email()
+    } else {
+        None
+    };
+
+    let display = config_path.display();
+    match decide_write(existing.as_deref(), email.as_deref()) {
+        WriteAction::AlreadyConfigured => {
+            println!("LANGFUSE_USER_ID already configured in {display} — leaving as-is");
+        }
+        WriteAction::Create(email) => {
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+            }
+            std::fs::write(config_path, fresh_config(email.as_deref()))
+                .map_err(|e| format!("could not write {display}: {e}"))?;
+            println!("Created config file: {display}");
+            if let Some(e) = email {
+                println!("Set LANGFUSE_USER_ID={e}");
+            }
+        }
+        WriteAction::AppendEmail(e) => {
+            let base = existing.unwrap_or_default();
+            std::fs::write(config_path, with_appended_user_id(&base, &e))
+                .map_err(|err| format!("could not write {display}: {err}"))?;
+            println!("Set LANGFUSE_USER_ID={e} in {display}");
+        }
+        WriteAction::ExistsNoChange => {
+            println!("Config file already exists: {display}");
+        }
+    }
+    Ok(())
+}
+
 /// `code-trace setup` entry point. `args` is everything after `setup`.
 pub fn run(args: &[String]) -> i32 {
     let mut register = false;
+    let mut write = false;
+    let mut no_prompt = false;
     let mut settings_path: Option<PathBuf> = None;
+    let mut config_path: Option<PathBuf> = None;
+    let mut user_email: Option<String> = None;
+
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--register-hook" => register = true,
+            "--write-config" => write = true,
+            "--no-prompt" => no_prompt = true,
             "--settings-file" => {
                 i += 1;
                 match args.get(i) {
                     Some(p) => settings_path = Some(PathBuf::from(p)),
                     None => {
                         eprintln!("setup: --settings-file requires a path");
+                        return 2;
+                    }
+                }
+            }
+            "--config-file" => {
+                i += 1;
+                match args.get(i) {
+                    Some(p) => config_path = Some(PathBuf::from(p)),
+                    None => {
+                        eprintln!("setup: --config-file requires a path");
+                        return 2;
+                    }
+                }
+            }
+            "--user-email" => {
+                i += 1;
+                match args.get(i) {
+                    Some(e) => user_email = Some(e.clone()),
+                    None => {
+                        eprintln!("setup: --user-email requires a value");
                         return 2;
                     }
                 }
@@ -133,22 +331,33 @@ pub fn run(args: &[String]) -> i32 {
         i += 1;
     }
 
-    if !register {
-        eprintln!("setup: nothing to do (expected --register-hook)");
+    if !register && !write {
+        eprintln!("setup: nothing to do (expected --register-hook and/or --write-config)");
         return 2;
     }
 
-    let path = settings_path.unwrap_or_else(default_settings_path);
-    match register_hook(&path) {
-        Ok(()) => {
-            println!("Registered code-trace Stop hook in {}", path.display());
-            0
-        }
-        Err(msg) => {
-            eprintln!("{msg}");
-            1
+    let mut code = 0;
+
+    if register {
+        let path = settings_path.unwrap_or_else(default_settings_path);
+        match register_hook(&path) {
+            Ok(()) => println!("Registered code-trace Stop hook in {}", path.display()),
+            Err(msg) => {
+                eprintln!("{msg}");
+                code = 1;
+            }
         }
     }
+
+    if write {
+        let path = config_path.unwrap_or_else(default_config_path);
+        if let Err(msg) = write_config(&path, user_email.as_deref(), !no_prompt) {
+            eprintln!("{msg}");
+            code = 1;
+        }
+    }
+
+    code
 }
 
 #[cfg(test)]
@@ -278,5 +487,88 @@ mod tests {
     fn non_array_stop_is_reset() {
         let out = register_stop_hook(json!({"hooks": {"Stop": "nonsense"}}));
         assert_eq!(code_trace_commands(&out), vec!["code-trace"]);
+    }
+
+    // --- config writing ---
+
+    #[test]
+    fn active_user_id_is_detected() {
+        assert!(config_has_user_id("LANGFUSE_USER_ID=me@example.com\n"));
+        assert!(config_has_user_id("  LANGFUSE_USER_ID = me@example.com \n"));
+    }
+
+    #[test]
+    fn commented_or_absent_user_id_is_not_detected() {
+        assert!(!config_has_user_id("# LANGFUSE_USER_ID=you@example.com\n"));
+        assert!(!config_has_user_id("TRACE_TO_LANGFUSE=true\nLANGFUSE_PUBLIC_KEY=pk\n"));
+        assert!(!config_has_user_id(""));
+    }
+
+    #[test]
+    fn decide_create_when_no_file() {
+        assert_eq!(decide_write(None, None), WriteAction::Create(None));
+        assert_eq!(
+            decide_write(None, Some("me@example.com")),
+            WriteAction::Create(Some("me@example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn decide_append_when_file_lacks_user_id() {
+        assert_eq!(
+            decide_write(Some("TRACE_TO_LANGFUSE=true\n"), Some("me@example.com")),
+            WriteAction::AppendEmail("me@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn decide_noop_when_file_lacks_user_id_and_no_email() {
+        assert_eq!(
+            decide_write(Some("TRACE_TO_LANGFUSE=true\n"), None),
+            WriteAction::ExistsNoChange
+        );
+    }
+
+    #[test]
+    fn decide_already_configured_wins_over_email() {
+        assert_eq!(
+            decide_write(Some("LANGFUSE_USER_ID=old@example.com\n"), Some("new@example.com")),
+            WriteAction::AlreadyConfigured
+        );
+    }
+
+    #[test]
+    fn fresh_config_without_email_has_commented_placeholder() {
+        let c = fresh_config(None);
+        assert!(!config_has_user_id(&c), "placeholder must be commented");
+        assert!(c.contains("# LANGFUSE_USER_ID=you@example.com"));
+        assert!(c.contains("TRACE_TO_LANGFUSE=false"));
+        assert!(c.contains("# CODE_TRACE_DEBUG=false"));
+        assert!(c.ends_with('\n'));
+    }
+
+    #[test]
+    fn fresh_config_with_email_sets_active_user_id() {
+        let c = fresh_config(Some("me@example.com"));
+        assert!(config_has_user_id(&c));
+        assert_eq!(
+            crate::config::parse_config_str(&c).get("LANGFUSE_USER_ID"),
+            Some(&"me@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn append_user_id_adds_active_line() {
+        let out = with_appended_user_id("TRACE_TO_LANGFUSE=true\n", "me@example.com");
+        assert!(out.ends_with("LANGFUSE_USER_ID=me@example.com\n"));
+        assert!(config_has_user_id(&out));
+    }
+
+    #[test]
+    fn append_user_id_inserts_newline_when_file_has_no_trailing_newline() {
+        // A hand-edited file without a trailing newline must not concatenate.
+        let out = with_appended_user_id("TRACE_TO_LANGFUSE=true", "me@example.com");
+        assert!(out.contains("TRACE_TO_LANGFUSE=true\nLANGFUSE_USER_ID=me@example.com\n"));
+        assert!(config_has_user_id(&out));
     }
 }

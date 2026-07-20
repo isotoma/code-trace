@@ -139,3 +139,80 @@ fn invalid_json_is_refused_without_overwriting() {
         "existing file must be left untouched"
     );
 }
+
+// --- setup --write-config ---
+
+/// Run `setup --write-config` against `config_file` with extra args. Every call
+/// passes a deterministic email source (`--user-email` or `--no-prompt`) so the
+/// binary never blocks on the interactive terminal prompt.
+fn write_config(config_file: &Path, extra: &[&str]) -> std::process::Output {
+    let mut cmd = Command::new(BIN);
+    cmd.args(["setup", "--write-config", "--config-file"]);
+    cmd.arg(config_file);
+    cmd.args(extra);
+    cmd.output().expect("failed to run code-trace setup --write-config")
+}
+
+fn config_user_id(config_file: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(config_file).ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == "LANGFUSE_USER_ID" {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn write_config_fresh_with_email_sets_active_user_id() {
+    let file = scratch("cfg-fresh-email").join("config");
+    assert!(write_config(&file, &["--user-email", "me@example.com"]).status.success());
+    assert_eq!(config_user_id(&file).as_deref(), Some("me@example.com"));
+}
+
+#[test]
+fn write_config_fresh_without_email_leaves_placeholder_commented() {
+    let file = scratch("cfg-fresh-noprompt").join("config");
+    assert!(write_config(&file, &["--no-prompt"]).status.success());
+    let contents = std::fs::read_to_string(&file).unwrap();
+    assert!(contents.contains("# LANGFUSE_USER_ID=you@example.com"));
+    assert_eq!(config_user_id(&file), None, "placeholder must stay commented");
+}
+
+#[test]
+fn write_config_appends_email_to_existing_file() {
+    let file = scratch("cfg-append").join("config");
+    std::fs::write(&file, "TRACE_TO_LANGFUSE=true\nLANGFUSE_PUBLIC_KEY=pk\n").unwrap();
+    assert!(write_config(&file, &["--user-email", "doug@example.com"]).status.success());
+    assert_eq!(config_user_id(&file).as_deref(), Some("doug@example.com"));
+    // Existing keys preserved.
+    assert!(std::fs::read_to_string(&file).unwrap().contains("LANGFUSE_PUBLIC_KEY=pk"));
+}
+
+#[test]
+fn write_config_leaves_existing_active_user_id_untouched() {
+    let file = scratch("cfg-already").join("config");
+    let original = "LANGFUSE_USER_ID=old@example.com\n";
+    std::fs::write(&file, original).unwrap();
+    assert!(write_config(&file, &["--user-email", "new@example.com"]).status.success());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        original,
+        "an already-configured user id must not be overwritten"
+    );
+}
+
+#[test]
+fn write_config_existing_file_without_email_is_noop() {
+    let file = scratch("cfg-noop").join("config");
+    let original = "TRACE_TO_LANGFUSE=true\n";
+    std::fs::write(&file, original).unwrap();
+    assert!(write_config(&file, &["--no-prompt"]).status.success());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+}

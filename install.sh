@@ -213,56 +213,13 @@ maybe_install_pi() {
   fi
 }
 
-# Create config file if it does not already exist
+# Create the config file, via the binary. `setup --write-config` also offers to
+# set the Langfuse user id from your email; it reads the terminal itself, so a
+# piped curl | bash install can prompt without the shell consuming its script.
 create_config() {
-  local config_dir config_file
-  config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace"
-  config_file="${config_dir}/config"
+  local config_file="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace/config"
 
-  # Ask for an email to attach to traces as the Langfuse user id, unless one is
-  # already configured. Prompts read from TTY_IN (the controlling terminal for a
-  # piped curl | bash install), resolved here in case create_config is called on
-  # its own; empty means no terminal, so skip rather than consume the script.
-  local user_email=""
-  [ -n "${TTY_IN}" ] || resolve_tty_in
-
-  if grep -Eq '^[[:space:]]*LANGFUSE_USER_ID[[:space:]]*=' "${config_file}" 2>/dev/null; then
-    echo "LANGFUSE_USER_ID already configured in ${config_file} — leaving as-is"
-  elif [ -n "${TTY_IN}" ]; then
-    echo ""
-    echo "Optionally attach your email to traces as the Langfuse user id"
-    echo "(enables Langfuse's per-user views). Leave blank to skip."
-    read -p "Email [skip]: " -r user_email < "${TTY_IN}" || user_email=""
-    user_email="$(printf '%s' "${user_email}" | tr -d '[:space:]')"
-  fi
-
-  if [ -f "${config_file}" ]; then
-    echo "Config file already exists: ${config_file}"
-    if [ -n "${user_email}" ]; then
-      printf 'LANGFUSE_USER_ID=%s\n' "${user_email}" >> "${config_file}"
-      echo "Set LANGFUSE_USER_ID=${user_email} in ${config_file}"
-    fi
-  else
-    mkdir -p "${config_dir}"
-    cat > "${config_file}" << 'EOF'
-# code-trace configuration
-# Set TRACE_TO_LANGFUSE=true and add your Langfuse keys to enable tracing.
-TRACE_TO_LANGFUSE=false
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-# LANGFUSE_BASE_URL=https://cloud.langfuse.com
-EOF
-    if [ -n "${user_email}" ]; then
-      printf 'LANGFUSE_USER_ID=%s\n' "${user_email}" >> "${config_file}"
-    else
-      echo "# LANGFUSE_USER_ID=you@example.com" >> "${config_file}"
-    fi
-    echo "# CODE_TRACE_DEBUG=false" >> "${config_file}"
-    echo "Created config file: ${config_file}"
-    if [ -n "${user_email}" ]; then
-      echo "Set LANGFUSE_USER_ID=${user_email}"
-    fi
-  fi
+  "${INSTALL_DIR}/${BINARY}" setup --write-config || true
 
   echo ""
   echo "Done! Edit ${config_file} to enable tracing:"
