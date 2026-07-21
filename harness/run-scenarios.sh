@@ -53,7 +53,8 @@ write_settings_env_mode() {
     "LANGFUSE_PUBLIC_KEY": "pk-test",
     "LANGFUSE_SECRET_KEY": "sk-test",
     "LANGFUSE_BASE_URL": "$FAKE",
-    "CODE_TRACE_SYNC_SEND": "1"
+    "CODE_TRACE_SYNC_SEND": "1",
+    "CODE_TRACE_REQUIRE_GIT_REPO": "false"
   },
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "code-trace --on-start"}]}],
@@ -80,6 +81,9 @@ LANGFUSE_PUBLIC_KEY=pk-test
 LANGFUSE_SECRET_KEY=sk-test
 LANGFUSE_BASE_URL=$FAKE
 CODE_TRACE_SYNC_SEND=1
+# /work is not a git repo in the harness; keep the default git-repo gate off
+# so scenarios exercise the trace pipeline, not the gate (covered by unit tests).
+CODE_TRACE_REQUIRE_GIT_REPO=false
 EOF
 }
 
