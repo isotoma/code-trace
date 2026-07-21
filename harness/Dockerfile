@@ -19,7 +19,13 @@ RUN cargo build --release --bin code-trace \
 FROM node:22-slim
 # Pinned CLI: bumping this is a deliberate contract re-verification (NOTES.md).
 ARG CLAUDE_CODE_VERSION=2.1.198
-RUN apt-get update \
+# Optional `npmrc` build secret: on networks that only reach npm through a
+# private registry (e.g. a corporate mirror), pass your ~/.npmrc so the install
+# routes through it. The secret is mounted only for this step — never baked into
+# a layer. When absent (e.g. CI, with clean access to registry.npmjs.org) npm
+# falls back to the default registry, so the build is unaffected. See README.
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    apt-get update \
  && apt-get install -y --no-install-recommends python3 curl ca-certificates procps \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}

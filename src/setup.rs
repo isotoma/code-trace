@@ -77,6 +77,59 @@ pub fn register_stop_hook(mut settings: Value) -> Value {
     settings
 }
 
+/// Register (or migrate) the canonical code-trace SessionStart hook, which runs
+/// `code-trace --on-start` to print the tracing-status reminder Claude Code
+/// injects as session context.
+///
+/// Mirrors [`register_stop_hook`] — idempotent, self-healing, and preserving of
+/// unrelated hooks. Unlike Stop, the SessionStart matcher is meaningful, and the
+/// reminder must fire for *every* session-start source (startup, resume, clear,
+/// compact, fork). So the canonical hook goes in its own group under an empty
+/// (match-all) matcher rather than being merged into a foreign matcher group.
+pub fn register_session_start_hook(mut settings: Value) -> Value {
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    let obj = settings.as_object_mut().expect("settings is an object");
+
+    if !obj.get("hooks").is_some_and(Value::is_object) {
+        obj.insert("hooks".to_string(), json!({}));
+    }
+    let hooks = obj["hooks"].as_object_mut().expect("hooks is an object");
+
+    if !hooks.get("SessionStart").is_some_and(Value::is_array) {
+        hooks.insert("SessionStart".to_string(), json!([]));
+    }
+    let ss = hooks["SessionStart"]
+        .as_array_mut()
+        .expect("SessionStart is an array");
+
+    // Strip every existing code-trace hook from all groups (migration + dedup).
+    for entry in ss.iter_mut() {
+        if let Some(inner) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+            inner.retain(|h| match h.get("command").and_then(Value::as_str) {
+                Some(cmd) => !is_code_trace_command(cmd),
+                None => true,
+            });
+        }
+    }
+    // Drop any group left with no hooks — this removes our own prior canonical
+    // group so re-running does not accumulate empty match-all entries.
+    ss.retain(|entry| {
+        entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_none_or(|inner| !inner.is_empty())
+    });
+
+    ss.push(json!({
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "code-trace --on-start"}],
+    }));
+
+    settings
+}
+
 fn default_settings_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     PathBuf::from(home).join(".claude").join("settings.json")
@@ -205,7 +258,7 @@ pub fn register_hook(settings_path: &Path) -> Result<(), String> {
         Err(e) => return Err(format!("could not read {}: {e}", settings_path.display())),
     };
 
-    let updated = register_stop_hook(settings);
+    let updated = register_session_start_hook(register_stop_hook(settings));
     let mut out = serde_json::to_string_pretty(&updated)
         .map_err(|e| format!("could not serialize settings: {e}"))?;
     out.push('\n');
@@ -493,9 +546,17 @@ mod tests {
 
     /// Commands of every code-trace Stop hook in the document, in order.
     fn code_trace_commands(settings: &Value) -> Vec<String> {
+        event_code_trace_commands(settings, "Stop")
+    }
+
+    /// Commands of every code-trace hook under `hooks/<event>`, in order.
+    fn event_code_trace_commands(settings: &Value, event: &str) -> Vec<String> {
         let mut cmds = Vec::new();
-        if let Some(stop) = settings.pointer("/hooks/Stop").and_then(|v| v.as_array()) {
-            for entry in stop {
+        if let Some(entries) = settings
+            .pointer(&format!("/hooks/{event}"))
+            .and_then(|v| v.as_array())
+        {
+            for entry in entries {
                 if let Some(hooks) = entry.get("hooks").and_then(|v| v.as_array()) {
                     for h in hooks {
                         if let Some(cmd) = h.get("command").and_then(|c| c.as_str()) {
@@ -508,6 +569,57 @@ mod tests {
             }
         }
         cmds
+    }
+
+    #[test]
+    fn session_start_hook_is_registered_with_match_all_matcher() {
+        // Regression: setup previously registered only the Stop hook, so the
+        // SessionStart tracing reminder never fired on real installs.
+        let out = register_session_start_hook(register_stop_hook(json!({})));
+        assert_eq!(
+            event_code_trace_commands(&out, "SessionStart"),
+            vec!["code-trace --on-start"]
+        );
+        // Must match every session-start source (startup/resume/clear/...).
+        let group = out.pointer("/hooks/SessionStart/0").unwrap();
+        assert_eq!(group["matcher"], "");
+    }
+
+    #[test]
+    fn session_start_registration_is_idempotent() {
+        let once = register_session_start_hook(json!({}));
+        let twice = register_session_start_hook(once);
+        assert_eq!(
+            event_code_trace_commands(&twice, "SessionStart"),
+            vec!["code-trace --on-start"]
+        );
+        // No accumulation of empty leftover groups.
+        assert_eq!(twice.pointer("/hooks/SessionStart").unwrap().as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn session_start_migrates_legacy_and_preserves_unrelated() {
+        let input = json!({
+            "hooks": {"SessionStart": [
+                {"matcher": "startup", "hooks": [{"type": "command", "command": "~/.claude/hooks/code-trace --on-start"}]},
+                {"matcher": "", "hooks": [{"type": "command", "command": "some-other-tool"}]}
+            ]}
+        });
+        let out = register_session_start_hook(input);
+        // Legacy code-trace hook collapsed to a single canonical entry.
+        assert_eq!(
+            event_code_trace_commands(&out, "SessionStart"),
+            vec!["code-trace --on-start"]
+        );
+        // Unrelated hook preserved.
+        let ss = out.pointer("/hooks/SessionStart").unwrap().as_array().unwrap();
+        let has_other = ss.iter().any(|e| {
+            e.get("hooks").and_then(|v| v.as_array()).is_some_and(|hs| {
+                hs.iter()
+                    .any(|h| h.get("command").and_then(|c| c.as_str()) == Some("some-other-tool"))
+            })
+        });
+        assert!(has_other, "unrelated SessionStart hook must be preserved");
     }
 
     #[test]

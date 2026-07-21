@@ -44,7 +44,16 @@ new_home() {
   rm -rf "$HOME" && mkdir -p "$HOME/.claude" "$WORK"
 }
 
-# Hook wiring with tracing configured via the settings env block.
+# Register the hooks through the REAL installer (`code-trace setup
+# --register-hook`), not hand-written JSON, so the scenarios exercise the same
+# wiring users get — including the SessionStart reminder hook. Hand-wiring both
+# hooks previously masked a bug where setup registered only the Stop hook.
+register_hooks() {
+  code-trace setup --register-hook --settings-file "$HOME/.claude/settings.json" \
+    || fail "setup --register-hook failed"
+}
+
+# Tracing configured via the settings env block; hooks via the installer.
 write_settings_env_mode() {
   cat > "$HOME/.claude/settings.json" <<EOF
 {
@@ -55,25 +64,15 @@ write_settings_env_mode() {
     "LANGFUSE_BASE_URL": "$FAKE",
     "CODE_TRACE_SYNC_SEND": "1",
     "CODE_TRACE_REQUIRE_GIT_REPO": "false"
-  },
-  "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "code-trace --on-start"}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "code-trace"}]}]
   }
 }
 EOF
+  register_hooks
 }
 
-# Hook wiring only; tracing configured solely via the code-trace config file.
+# Tracing configured solely via the code-trace config file; hooks via installer.
 write_settings_config_mode() {
-  cat > "$HOME/.claude/settings.json" <<'EOF'
-{
-  "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "code-trace --on-start"}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "code-trace"}]}]
-  }
-}
-EOF
+  register_hooks
   mkdir -p "$HOME/.config/code-trace"
   cat > "$HOME/.config/code-trace/config" <<EOF
 TRACE_TO_LANGFUSE=true
