@@ -52,12 +52,51 @@ fn code_trace_commands(settings_file: &Path) -> Vec<String> {
     cmds
 }
 
+/// Commands of every code-trace hook under `hooks/<event>` in the written file.
+fn event_commands(settings_file: &Path, event: &str) -> Vec<String> {
+    let contents = std::fs::read_to_string(settings_file).expect("read settings file");
+    let settings: Value = serde_json::from_str(&contents).expect("settings file is valid JSON");
+    let mut cmds = Vec::new();
+    if let Some(entries) = settings
+        .pointer(&format!("/hooks/{event}"))
+        .and_then(|v| v.as_array())
+    {
+        for entry in entries {
+            if let Some(hooks) = entry.get("hooks").and_then(|v| v.as_array()) {
+                for h in hooks {
+                    if let Some(cmd) = h.get("command").and_then(|c| c.as_str()) {
+                        let base = Path::new(cmd.split_whitespace().next().unwrap_or(""))
+                            .file_name()
+                            .and_then(|s| s.to_str());
+                        if base == Some("code-trace") {
+                            cmds.push(cmd.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cmds
+}
+
 #[test]
 fn fresh_install_registers_one_canonical_hook() {
     let file = scratch("fresh").join("settings.json");
     let out = register(&file);
     assert!(out.status.success());
     assert_eq!(code_trace_commands(&file), vec!["code-trace"]);
+}
+
+#[test]
+fn fresh_install_registers_session_start_reminder_hook() {
+    // Regression: the SessionStart hook (which prints the tracing reminder) was
+    // never written, so the warning never fired on real installs.
+    let file = scratch("fresh-onstart").join("settings.json");
+    assert!(register(&file).status.success());
+    assert_eq!(
+        event_commands(&file, "SessionStart"),
+        vec!["code-trace --on-start"]
+    );
 }
 
 #[test]
