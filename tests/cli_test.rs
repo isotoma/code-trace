@@ -229,7 +229,17 @@ fn on_start_records_session_and_prints_enabled_reminder() {
     let payload = r#"{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-on-start","transcript_path":"/tmp/t.jsonl","cwd":"/tmp"}"#;
     let (code, out, _) = env.run(&["--on-start"], Some(payload));
     assert_eq!(code, 0);
-    assert!(out.contains("ENABLED"), "got: {out}");
+    // Emitted as a SessionStart `systemMessage` (JSON) so the USER sees a
+    // terminal banner; plain stdout would only reach the model's context.
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    assert!(
+        v["systemMessage"].as_str().unwrap_or("").contains("ENABLED"),
+        "got: {out}"
+    );
+    assert!(
+        v.get("hookSpecificOutput").is_none(),
+        "reminder is user-facing only; no agent-context line: {out}"
+    );
     let state = env.read_state();
     let record = &state.sessions["sess-on-start"];
     assert_eq!(record.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
@@ -260,7 +270,11 @@ fn on_start_reports_paused_for_suppressed_session() {
     let payload = r#"{"hook_event_name":"SessionStart","source":"resume","session_id":"sess-private","transcript_path":"/tmp/t.jsonl","cwd":"/tmp"}"#;
     let (code, out, _) = env.run(&["--on-start"], Some(payload));
     assert_eq!(code, 0);
-    assert!(out.contains("PAUSED"), "got: {out}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    assert!(
+        v["systemMessage"].as_str().unwrap_or("").contains("PAUSED"),
+        "got: {out}"
+    );
     assert!(env.read_state().sessions["sess-private"].suppressed);
 }
 
