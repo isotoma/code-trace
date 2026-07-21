@@ -20,6 +20,25 @@ docker compose -f harness/docker-compose.yml up --build \
 The `runner` service executes `run-scenarios.sh` and exits non-zero on the
 first failing scenario, dumping the fake Langfuse event log.
 
+Hooks are registered by the **real installer** (`code-trace setup
+--register-hook`), not hand-written JSON, so the scenarios exercise the wiring
+users actually get — including the SessionStart reminder hook.
+
+### Behind a private npm registry
+
+The image build runs `npm install -g @anthropic-ai/claude-code`. On networks
+that only reach npm through a private registry (so a clean container cannot hit
+`registry.npmjs.org` directly), point `NPMRC_FILE` at an `~/.npmrc` that routes
+through it — passed to the build as a BuildKit secret, never baked into a layer:
+
+```bash
+NPMRC_FILE="$HOME/.npmrc" docker compose -f harness/docker-compose.yml up --build \
+  --exit-code-from runner --abort-on-container-exit
+```
+
+Leave `NPMRC_FILE` unset (the default) where the registry is directly reachable,
+such as CI.
+
 ## Run scenarios without Docker
 
 The runner script only needs `claude`, the two binaries, and python3 on PATH:

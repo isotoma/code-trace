@@ -3,6 +3,8 @@ services:
     build:
       context: ..
       dockerfile: harness/Dockerfile
+      secrets:
+        - npmrc
     command: fake-langfuse
     environment:
       FAKE_LANGFUSE_ADDR: 0.0.0.0:3080
@@ -11,6 +13,8 @@ services:
     build:
       context: ..
       dockerfile: harness/Dockerfile
+      secrets:
+        - npmrc
     command: python3 /harness/stub-model/server.py
     environment:
       STUB_MODEL_PORT: "3081"
@@ -19,6 +23,8 @@ services:
     build:
       context: ..
       dockerfile: harness/Dockerfile
+      secrets:
+        - npmrc
     command: /harness/run-scenarios.sh
     depends_on:
       - fake-langfuse
@@ -30,3 +36,11 @@ services:
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
       DISABLE_TELEMETRY: "1"
       DISABLE_ERROR_REPORTING: "1"
+
+# Optional npm credentials for the image build. NPMRC_FILE points at an ~/.npmrc
+# to route `npm install` through a private registry on restricted networks;
+# unset it (the default empty file) for environments with direct registry
+# access, such as CI. Consumed as a BuildKit build secret — see harness/Dockerfile.
+secrets:
+  npmrc:
+    file: ${NPMRC_FILE:-/dev/null}
