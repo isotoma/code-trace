@@ -198,7 +198,7 @@ This is **best-effort**: it catches secrets with recognizable shapes but will mi
 
 ### Startup reminder (`--on-start`)
 
-Wired as a Claude Code `SessionStart` hook, `code-trace --on-start` records the session and prints one line — `tracing ENABLED → <host>` or `tracing PAUSED for this session` — which Claude Code injects as agent context. It prints nothing when tracing is not configured, and never emits.
+Wired as a Claude Code `SessionStart` hook, `code-trace --on-start` records the session and emits a JSON `systemMessage` — `tracing ENABLED → <host>` or `tracing PAUSED for this session` — which Claude Code shows to the **user** as a terminal banner (not injected into the model's context; the warning is for the human). It prints nothing when tracing is not configured, and never emits traces.
 
 ```json
 {

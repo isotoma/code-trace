@@ -106,6 +106,15 @@ transcript_of() { # session-id
 
 wait_for_services
 
+# reminder_shown_to_user <session-id> <substring> — true when the SessionStart
+# reminder was delivered to the USER, i.e. recorded as a `hook_system_message`
+# attachment (Claude Code renders these as a terminal banner). Distinct from
+# text merely injected into the model's context.
+reminder_shown_to_user() {
+  local t; t=$(transcript_of "$1")
+  [ -n "$t" ] && grep '"type":"hook_system_message"' "$t" | grep -q "$2"
+}
+
 # --- (a) one turn -> one trace with the session id ---------------------------
 say "scenario a: one turn produces one trace"
 new_home; write_settings_env_mode; reset_fake
@@ -122,11 +131,10 @@ run_claude "$S" "say hi"
 [ "$(events_py "traces == [('$S', 1)]")" = "True" ] || fail "config-file-only turn did not trace, scenario b"
 PASS=$((PASS+1))
 
-# --- (c) --on-start reminder appears; --on-start never ingests ----------------
-say "scenario c: startup reminder in session context"
-T=$(transcript_of "$S")
-[ -n "$T" ] || fail "no transcript found for $S, scenario c"
-grep -q "tracing ENABLED" "$T" || fail "reminder line missing from transcript, scenario c"
+# --- (c) --on-start reminder shown to the user; --on-start never ingests ------
+say "scenario c: startup reminder shown to the user"
+reminder_shown_to_user "$S" "tracing ENABLED" \
+  || fail "ENABLED reminder not shown to user (no hook_system_message), scenario c"
 # The only ingestion so far is scenario b's single Stop-hook post.
 [ "$(events_py "len(posts)")" = "1" ] || fail "--on-start must never ingest, scenario c"
 PASS=$((PASS+1))
@@ -145,7 +153,8 @@ PASS=$((PASS+1))
 say "scenario e: suppression survives resume"
 run_claude_resume "$S" "and again"
 [ "$(events_py "len(posts)")" = "1" ] || fail "resumed paused session emitted, scenario e"
-grep -q "tracing PAUSED" "$(transcript_of "$S")" || fail "paused reminder missing on resume, scenario e"
+reminder_shown_to_user "$S" "tracing PAUSED" \
+  || fail "PAUSED reminder not shown to user on resume, scenario e"
 PASS=$((PASS+1))
 
 say "all $PASS scenarios passed"

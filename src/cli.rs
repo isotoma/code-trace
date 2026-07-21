@@ -34,14 +34,19 @@ pub fn on_start() -> i32 {
     let Some(config) = langfuse::config_from_env() else {
         return 0;
     };
-    if suppressed {
-        println!("code-trace: tracing PAUSED for this session (private mode).");
+    let message = if suppressed {
+        "code-trace: tracing PAUSED for this session (private mode).".to_string()
     } else {
-        println!(
+        format!(
             "⚠️ code-trace: tracing ENABLED → {}. Use the pause command to make this session private.",
             config.host
-        );
-    }
+        )
+    };
+    // Surface the reminder to the USER via a SessionStart `systemMessage`
+    // (top-level JSON, exit 0), which Claude Code renders as a terminal banner.
+    // Plain stdout would instead be injected into the model's context — invisible
+    // to the user, which is who this warning is for.
+    println!("{}", serde_json::json!({ "systemMessage": message }));
     0
 }
 
