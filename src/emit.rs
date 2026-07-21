@@ -1,4 +1,5 @@
 use crate::log;
+use crate::mask;
 use crate::source::Source;
 use crate::transcript;
 use crate::turns::Turn;
@@ -7,6 +8,24 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 const MAX_CHARS: usize = 20_000;
+
+/// Mask secrets when enabled, otherwise pass through. Returns the text and the
+/// number of redactions applied.
+fn mask_text(s: &str, enabled: bool) -> (String, usize) {
+    if enabled {
+        mask::mask_str(s)
+    } else {
+        (s.to_string(), 0)
+    }
+}
+
+/// Record a redaction count on a `*_meta` object (no-op when nothing was
+/// redacted, so unaffected content carries no extra field).
+fn note_redactions(meta: &mut Value, redacted: usize) {
+    if redacted > 0 {
+        meta["redacted"] = json!(redacted);
+    }
+}
 
 fn truncate(s: &str) -> (String, Value) {
     let orig_len = s.len();
@@ -65,12 +84,18 @@ pub fn build_ingestion_batch(
     source: Source,
     user_id: Option<&str>,
 ) -> Vec<Value> {
+    let masking = mask::enabled();
+
     let user_text_raw = transcript::extract_text(transcript::get_content(&turn.user_msg));
-    let (user_text, user_text_meta) = truncate(&user_text_raw);
+    let (user_text_masked, user_redacted) = mask_text(&user_text_raw, masking);
+    let (user_text, mut user_text_meta) = truncate(&user_text_masked);
+    note_redactions(&mut user_text_meta, user_redacted);
 
     let last_assistant = turn.assistant_msgs.last().unwrap();
     let assistant_text_raw = transcript::extract_text(transcript::get_content(last_assistant));
-    let (assistant_text, assistant_text_meta) = truncate(&assistant_text_raw);
+    let (assistant_text_masked, assistant_redacted) = mask_text(&assistant_text_raw, masking);
+    let (assistant_text, mut assistant_text_meta) = truncate(&assistant_text_masked);
+    note_redactions(&mut assistant_text_meta, assistant_redacted);
 
     let model = transcript::get_model(&turn.assistant_msgs[0]);
     let tool_calls = tool_calls_from_assistants(&turn.assistant_msgs);
@@ -172,10 +197,17 @@ pub fn build_ingestion_batch(
         let tool_id_str = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let tool_name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-        let input_val = tc.get("input").cloned().unwrap_or(json!({}));
+        // Tool inputs are frequently structured JSON (e.g. Bash's
+        // {"command": ...} or Write's {"content": ...}); mask string leaves
+        // recursively so secrets in non-string inputs are not passed through raw.
+        let mut input_val = tc.get("input").cloned().unwrap_or(json!({}));
+        let input_redacted = if masking { mask::mask_value(&mut input_val) } else { 0 };
         let (input_display, input_meta) = if let Some(s) = input_val.as_str() {
-            let (trunc, meta) = truncate(s);
+            let (trunc, mut meta) = truncate(s);
+            note_redactions(&mut meta, input_redacted);
             (json!(trunc), Some(meta))
+        } else if input_redacted > 0 {
+            (input_val.clone(), Some(json!({"redacted": input_redacted})))
         } else {
             (input_val.clone(), None)
         };
@@ -192,7 +224,9 @@ pub fn build_ingestion_batch(
                 } else {
                     serde_json::to_string(&v).unwrap_or_default()
                 };
-                let (trunc, meta) = truncate(&s);
+                let (s, output_redacted) = mask_text(&s, masking);
+                let (trunc, mut meta) = truncate(&s);
+                note_redactions(&mut meta, output_redacted);
                 (Some(json!(trunc)), Some(meta))
             }
             None => (None, None),
@@ -462,5 +496,78 @@ mod tests {
         assert_eq!(truncated.len(), MAX_CHARS);
         assert_eq!(meta["truncated"], true);
         assert_eq!(meta["orig_len"], 30_000);
+    }
+
+    #[test]
+    fn mask_text_passthrough_when_disabled() {
+        // Pure helper, no env: masking off returns the input verbatim.
+        let (out, n) = mask_text("token ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
+        assert!(out.contains("ghp_"));
+        assert_eq!(n, 0);
+    }
+
+    // A turn whose prompt, tool input, and tool result each contain a secret.
+    fn turn_with_secrets() -> Turn {
+        let ghp = format!("ghp_{}", "a".repeat(36));
+        let mut tool_results = HashMap::new();
+        tool_results.insert(
+            "tu_1".to_string(),
+            json!("AWS key AKIAIOSFODNN7EXAMPLE in output"),
+        );
+        Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":
+                format!("here is my token {ghp}")}}),
+            assistant_msgs: vec![json!({"type":"assistant","message":{
+                "id":"m1","role":"assistant","model":"claude","content":[
+                    {"type":"text","text":"ok"},
+                    {"type":"tool_use","id":"tu_1","name":"Bash",
+                     "input":{"command": format!("export TOKEN={ghp}")}}
+                ]}})],
+            tool_results_by_id: tool_results,
+        }
+    }
+
+    #[test]
+    fn masks_secrets_in_prompt_tool_input_and_output() {
+        use crate::source::Source;
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CODE_TRACE_MASK_SECRETS"); // default = on
+        let turn = turn_with_secrets();
+        let events = build_ingestion_batch(
+            "sess1", 1, &turn, Path::new("/tmp/t.jsonl"),
+            &["claude-code".to_string()], Source::ClaudeCode, None,
+        );
+
+        // Prompt (trace input) redacted, count recorded in metadata.
+        let trace_in = events[0]["body"]["input"]["content"].as_str().unwrap();
+        assert!(trace_in.contains("[REDACTED:github-token]"));
+        assert!(!trace_in.contains("ghp_"));
+        assert_eq!(events[0]["body"]["metadata"]["user_text"]["redacted"], 1);
+
+        // Tool span: structured input and string output both redacted.
+        let span = &events[2]["body"];
+        assert_eq!(span["input"]["command"], format!("export TOKEN=[REDACTED:github-token]"));
+        assert!(span["output"].as_str().unwrap().contains("[REDACTED:aws-key]"));
+        assert_eq!(span["metadata"]["input_meta"]["redacted"], 1);
+        assert_eq!(span["metadata"]["output_meta"]["redacted"], 1);
+    }
+
+    #[test]
+    fn no_masking_when_disabled() {
+        use crate::source::Source;
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::set_var("CODE_TRACE_MASK_SECRETS", "false");
+        let turn = turn_with_secrets();
+        let events = build_ingestion_batch(
+            "sess1", 1, &turn, Path::new("/tmp/t.jsonl"),
+            &["claude-code".to_string()], Source::ClaudeCode, None,
+        );
+        std::env::remove_var("CODE_TRACE_MASK_SECRETS");
+
+        let trace_in = events[0]["body"]["input"]["content"].as_str().unwrap();
+        assert!(trace_in.contains("ghp_"), "secret should pass through when disabled");
+        assert!(events[0]["body"]["metadata"]["user_text"].get("redacted").is_none());
+        let span = &events[2]["body"];
+        assert!(span["input"]["command"].as_str().unwrap().contains("ghp_"));
     }
 }

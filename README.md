@@ -152,6 +152,7 @@ Environment variables take precedence over the config file. This is useful for p
 | `LANGFUSE_BASE_URL` | No | Langfuse host (default: `https://cloud.langfuse.com`) |
 | `LANGFUSE_USER_ID` | No | User to attach to traces (typically your email); enables Langfuse's [user-scoped views](https://langfuse.com/docs/observability/features/users). Omitted when unset. |
 | `CODE_TRACE_REQUIRE_GIT_REPO` | No | Restrict tracing to sessions whose working directory is inside a git repository. Defaults to `true`; set to `false` to trace everywhere. |
+| `CODE_TRACE_MASK_SECRETS` | No | Redact shape-recognizable secrets (API keys, tokens, private keys) from trace content before sending. Defaults to `true`; set to `false` to disable. |
 | `CODE_TRACE_DEBUG` | No | Set to `true` for debug logging (alias: `CC_TRACE_DEBUG`) |
 
 The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_LANGFUSE_PUBLIC_KEY`).
@@ -188,6 +189,12 @@ New sessions always trace by default. Note that pausing cannot recall a turn who
 **First contact never uploads history.** The first time code-trace sees a session (no cursor in state — e.g. it was just installed mid-session, or an old session is resumed after install), it emits only the turn that fired the hook and fast-forwards past everything earlier. Pre-install content is never traced; the skip is recorded in the log.
 
 Known limitation: `TRACE_TO_LANGFUSE=false` is an on/off switch, not a privacy control — while it is off no state is touched at all, so for a session that already has a cursor, turns completed during the off period will emit when tracing is re-enabled. Use `pause` for "don't trace this"; it is airtight.
+
+### Secret masking
+
+By default (`CODE_TRACE_MASK_SECRETS=true`), trace content is scanned for shape-recognizable secrets — private-key blocks, AWS key ids, GitHub/Slack/Google/Stripe/Anthropic/OpenAI tokens, JWTs, `Bearer` headers, and credentials embedded in URLs — and each match is replaced with a typed placeholder such as `[REDACTED:github-token]` before anything is sent. Masking covers the user prompt, the assistant reply, and every tool call's input (including structured JSON inputs) and output. A per-field redaction count is recorded in the trace metadata (`"redacted": N`) so you can see masking fired without seeing what was masked. Set `CODE_TRACE_MASK_SECRETS=false` to disable.
+
+This is **best-effort**: it catches secrets with recognizable shapes but will miss novel or unstructured ones. It reduces leakage, it does not eliminate it — `pause` and the git-repo restriction remain the airtight controls for confidential work.
 
 ### Startup reminder (`--on-start`)
 
