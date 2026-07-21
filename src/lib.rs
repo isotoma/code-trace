@@ -3,6 +3,7 @@ pub mod config;
 pub mod emit;
 pub mod langfuse;
 pub mod log;
+pub mod mask;
 pub mod opencode;
 pub mod payload;
 pub mod pi_agent;
