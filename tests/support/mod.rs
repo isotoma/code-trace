@@ -21,6 +21,7 @@ pub struct TestEnv {
     pub home: TempDir,
     pub langfuse_url: Option<String>,
     pub sync_send: bool,
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl TestEnv {
@@ -29,6 +30,7 @@ impl TestEnv {
             home: TempDir::new().unwrap(),
             langfuse_url: None,
             sync_send: false,
+            extra_env: Vec::new(),
         }
     }
 
@@ -38,6 +40,7 @@ impl TestEnv {
             home: TempDir::new().unwrap(),
             langfuse_url: Some(url.to_string()),
             sync_send: false,
+            extra_env: Vec::new(),
         }
     }
 
@@ -45,6 +48,13 @@ impl TestEnv {
     /// making "nothing was sent" assertions exact.
     pub fn sync_send(mut self) -> Self {
         self.sync_send = true;
+        self
+    }
+
+    /// Set an extra env var, applied last so it overrides the defaults (e.g.
+    /// re-enabling the git-repo gate that `command()` turns off).
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.extra_env.push((key.to_string(), value.to_string()));
         self
     }
 
@@ -80,7 +90,10 @@ impl TestEnv {
             .env_clear()
             .env("HOME", self.home.path())
             .env("XDG_DATA_HOME", self.home.path().join("data"))
-            .env("XDG_CONFIG_HOME", self.home.path().join("config"));
+            .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+            // Payload cwds here are non-git temp dirs; the git-repo gate is on
+            // by default, so disable it unless a test opts back in.
+            .env("CODE_TRACE_REQUIRE_GIT_REPO", "false");
         if let Some(url) = &self.langfuse_url {
             cmd.env("TRACE_TO_LANGFUSE", "true")
                 .env("LANGFUSE_PUBLIC_KEY", fake_langfuse::PUBLIC_KEY)
@@ -89,6 +102,9 @@ impl TestEnv {
         }
         if self.sync_send {
             cmd.env("CODE_TRACE_SYNC_SEND", "1");
+        }
+        for (k, v) in &self.extra_env {
+            cmd.env(k, v);
         }
         cmd
     }
@@ -115,10 +131,15 @@ impl TestEnv {
 
 /// Claude Code Stop-hook payload.
 pub fn stop_payload(session_id: &str, transcript: &Path) -> String {
+    stop_payload_cwd(session_id, transcript, "/tmp")
+}
+
+/// Claude Code Stop-hook payload with an explicit cwd (for git-gate tests).
+pub fn stop_payload_cwd(session_id: &str, transcript: &Path, cwd: &str) -> String {
     serde_json::json!({
         "session_id": session_id,
         "transcript_path": transcript.to_string_lossy(),
-        "cwd": "/tmp"
+        "cwd": cwd
     })
     .to_string()
 }

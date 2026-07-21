@@ -151,6 +151,7 @@ Environment variables take precedence over the config file. This is useful for p
 | `LANGFUSE_SECRET_KEY` | Yes | Langfuse secret key |
 | `LANGFUSE_BASE_URL` | No | Langfuse host (default: `https://cloud.langfuse.com`) |
 | `LANGFUSE_USER_ID` | No | User to attach to traces (typically your email); enables Langfuse's [user-scoped views](https://langfuse.com/docs/observability/features/users). Omitted when unset. |
+| `CODE_TRACE_REQUIRE_GIT_REPO` | No | Restrict tracing to sessions whose working directory is inside a git repository. Defaults to `true`; set to `false` to trace everywhere. |
 | `CODE_TRACE_DEBUG` | No | Set to `true` for debug logging (alias: `CC_TRACE_DEBUG`) |
 
 The `CC_LANGFUSE_` prefix is also accepted for all Langfuse variables (e.g. `CC_LANGFUSE_PUBLIC_KEY`).

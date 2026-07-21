@@ -21,6 +21,14 @@ fn git_cmd(args: &[&str], cwd: Option<&str>) -> Option<String> {
     }
 }
 
+/// Whether `cwd` (or the process working directory when `None`) is inside a
+/// git work tree. Any subdirectory of a repo counts — `git rev-parse` walks up
+/// to the repo root. A missing `git` binary or any error is treated as "not a
+/// repo".
+pub fn cwd_in_git_repo(cwd: Option<&str>) -> bool {
+    git_cmd(&["rev-parse", "--is-inside-work-tree"], cwd).as_deref() == Some("true")
+}
+
 pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<&str>) -> Vec<String> {
     let mut tags = vec![source.agent_tag().to_string()];
 
@@ -97,6 +105,21 @@ pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cwd_in_git_repo_true_for_repo_and_false_for_plain_dir() {
+        let repo = tempfile::TempDir::new().unwrap();
+        let repo_path = repo.path().to_string_lossy().to_string();
+        // git init makes it a work tree; a subdir must also count.
+        assert!(git_cmd(&["init"], Some(&repo_path)).is_some());
+        assert!(cwd_in_git_repo(Some(&repo_path)));
+        let sub = repo.path().join("nested/deeper");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(cwd_in_git_repo(Some(&sub.to_string_lossy())));
+
+        let plain = tempfile::TempDir::new().unwrap();
+        assert!(!cwd_in_git_repo(Some(&plain.path().to_string_lossy())));
+    }
 
     #[test]
     fn always_includes_agent_tag() {

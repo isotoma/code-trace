@@ -58,6 +58,16 @@ fn run() -> i32 {
     };
 
     let cwd = input.cwd().map(String::from);
+
+    // Optional restriction (on by default): only trace sessions whose working
+    // directory is inside a git repository. Early-return style — no session
+    // recorded, no cursor advanced; first-contact-skip handles a later move
+    // into a repo. Disable with CODE_TRACE_REQUIRE_GIT_REPO=false.
+    if langfuse::require_git_repo() && !tags::cwd_in_git_repo(cwd.as_deref()) {
+        log::debug("cwd not in a git repo; skipping (CODE_TRACE_REQUIRE_GIT_REPO)");
+        return 0;
+    }
+
     let env_tags = tags::gather_env_tags(source, cwd.as_deref(), input.agent_version());
     let user_id = langfuse::user_id_from_env();
 

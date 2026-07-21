@@ -10,6 +10,16 @@ pub fn tracing_enabled() -> bool {
         == "true"
 }
 
+/// Whether tracing is restricted to sessions whose working directory is inside
+/// a git repository. Defaults to `true`; set `CODE_TRACE_REQUIRE_GIT_REPO=false`
+/// to trace everywhere.
+pub fn require_git_repo() -> bool {
+    match std::env::var("CODE_TRACE_REQUIRE_GIT_REPO") {
+        Ok(v) => v.trim().to_lowercase() != "false",
+        Err(_) => true,
+    }
+}
+
 /// Resolve Langfuse credentials and host from the environment.
 /// Returns None when either key is missing.
 pub fn config_from_env() -> Option<LangfuseConfig> {
@@ -150,6 +160,28 @@ pub fn bulk_delete_traces(config: &LangfuseConfig, ids: &[String]) -> Result<usi
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn require_git_repo_defaults_true_and_honors_false() {
+        // Only this test touches CODE_TRACE_REQUIRE_GIT_REPO, so mutating the
+        // process env here does not race other tests reading it.
+        std::env::remove_var("CODE_TRACE_REQUIRE_GIT_REPO");
+        assert!(require_git_repo(), "unset should default to true");
+
+        std::env::set_var("CODE_TRACE_REQUIRE_GIT_REPO", "false");
+        assert!(!require_git_repo(), "\"false\" disables the restriction");
+
+        std::env::set_var("CODE_TRACE_REQUIRE_GIT_REPO", "FALSE");
+        assert!(!require_git_repo(), "case-insensitive");
+
+        std::env::set_var("CODE_TRACE_REQUIRE_GIT_REPO", "true");
+        assert!(require_git_repo());
+
+        std::env::set_var("CODE_TRACE_REQUIRE_GIT_REPO", "");
+        assert!(require_git_repo(), "empty is not \"false\" -> restriction on");
+
+        std::env::remove_var("CODE_TRACE_REQUIRE_GIT_REPO");
+    }
 
     #[test]
     fn parses_page_ids_and_total() {

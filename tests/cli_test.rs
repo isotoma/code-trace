@@ -139,7 +139,10 @@ impl TestEnv {
             .env_clear()
             .env("HOME", self.home.path())
             .env("XDG_DATA_HOME", self.home.path().join("data"))
-            .env("XDG_CONFIG_HOME", self.home.path().join("config"));
+            .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+            // Payload cwds here are "/tmp" (non-git); the git-repo gate is on
+            // by default, so disable it for these CLI-behavior tests.
+            .env("CODE_TRACE_REQUIRE_GIT_REPO", "false");
         if let Some(url) = &self.langfuse_url {
             cmd.env("TRACE_TO_LANGFUSE", "true")
                 .env("LANGFUSE_PUBLIC_KEY", "pk-test")
