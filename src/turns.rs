@@ -75,6 +75,23 @@ pub fn build_turns(messages: Vec<Value>) -> Vec<Turn> {
             if !assistant_latest.contains_key(&mid) {
                 assistant_order.push(mid.clone());
             }
+            // Tool results for OpenCode/PiAgent are attached to the assistant
+            // message itself (message.tool_results) by the source normalizers,
+            // not delivered as separate user messages like Claude Code. Extract
+            // them here so emit.rs can populate tool-span outputs. Additive:
+            // Claude Code assistant messages never carry this field.
+            if let Some(trs) = msg
+                .get("message")
+                .and_then(|m| m.get("tool_results"))
+                .and_then(|v| v.as_array())
+            {
+                for tr in trs {
+                    if let Some(tid) = tr.get("tool_use_id").and_then(|v| v.as_str()) {
+                        let content = tr.get("content").cloned().unwrap_or(Value::Null);
+                        tool_results_by_id.insert(tid.to_string(), content);
+                    }
+                }
+            }
             assistant_latest.insert(mid, msg);
             continue;
         }
