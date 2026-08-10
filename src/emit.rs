@@ -152,7 +152,7 @@ pub fn build_ingestion_batch(
     let mut gen_body = serde_json::Map::new();
     gen_body.insert("id".to_string(), json!(gen_id));
     gen_body.insert("traceId".to_string(), json!(trace_id));
-    gen_body.insert("name".to_string(), json!("Claude Response"));
+    gen_body.insert("name".to_string(), json!(format!("{} Response", source.trace_name_prefix())));
     gen_body.insert("startTime".to_string(), json!(now));
     gen_body.insert("endTime".to_string(), json!(now));
     gen_body.insert("model".to_string(), json!(model));
@@ -171,6 +171,16 @@ pub fn build_ingestion_batch(
             "tool_count": tool_calls.len(),
         }),
     );
+    log::debug(&format!(
+        "turn {} model={} usage={}",
+        turn_num,
+        model,
+        match &total_usage {
+            Some(u) => format!("Some(in={} out={} cache_read={} cache_write={})",
+                u.input_tokens, u.output_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens),
+            None => "None".to_string(),
+        }
+    ));
     // Omitted entirely (not zero-filled) when the turn has no usage data at
     // all, so Langfuse never prices a generation at $0 for a source that
     // simply doesn't report usage.

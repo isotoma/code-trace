@@ -74,7 +74,7 @@ fn end_to_end_opencode_transcript() {
             "parts": [{ "type": "text", "text": "Hello" }]
         }),
         json!({
-            "info": { "id": "msg_2", "role": "assistant", "modelID": "claude-sonnet-4-20250514", "tokens": { "input": 12, "output": 34, "cache": { "read": 0, "write": 0 } } },
+            "info": { "id": "msg_2", "role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-4-20250514", "tokens": { "input": 12, "output": 34, "cache": { "read": 0, "write": 0 } } },
             "parts": [
                 { "type": "text", "text": "Hi there!" },
                 { "type": "tool_use", "id": "tu_1", "name": "Bash", "input": { "command": "ls" } }
