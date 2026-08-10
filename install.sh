@@ -32,6 +32,13 @@ resolve_target() {
   esac
 }
 
+# Print status to stdout only when not in quiet mode.
+log() {
+  if [ "${QUIET:-false}" != true ]; then
+    echo "$*"
+  fi
+}
+
 # Download the release asset, or fall back to a local build.
 install_binary() {
   local asset download_url local_bin
@@ -45,22 +52,22 @@ install_binary() {
   if [ -z "${download_url}" ]; then
     local_bin="${SCRIPT_DIR}/target/release/${BINARY}"
     if [ -f "${local_bin}" ]; then
-      echo "No release found; using local build: ${local_bin}"
+      log "No release found; using local build: ${local_bin}"
       mkdir -p "${INSTALL_DIR}"
       cp "${local_bin}" "${INSTALL_DIR}/${BINARY}"
       chmod +x "${INSTALL_DIR}/${BINARY}"
-      echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+      log "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
     else
       echo "Could not find release asset for ${asset} and no local build found." >&2
       echo "Run 'cargo build --release' first, or check that the repo has a published release." >&2
       exit 1
     fi
   else
-    echo "Downloading ${BINARY} for ${TARGET}..."
+    log "Downloading ${BINARY} for ${TARGET}..."
     mkdir -p "${INSTALL_DIR}"
     curl -sfL "${download_url}" -o "${INSTALL_DIR}/${BINARY}"
     chmod +x "${INSTALL_DIR}/${BINARY}"
-    echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+    log "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
   fi
 }
 
@@ -78,12 +85,12 @@ ensure_path() {
   esac
 
   if [ -f "${rc_file}" ] && grep -q "${INSTALL_DIR}" "${rc_file}"; then
-    echo "${INSTALL_DIR} already in ${rc_file} (not currently in PATH — restart your shell)"
+    log "${INSTALL_DIR} already in ${rc_file} (not currently in PATH — restart your shell)"
   else
     echo "" >> "${rc_file}"
     echo "export PATH=\"${INSTALL_DIR}:\${PATH}\"" >> "${rc_file}"
-    echo "Added ${INSTALL_DIR} to PATH in ${rc_file}"
-    echo "Run: source ${rc_file} (or restart your shell)"
+    log "Added ${INSTALL_DIR} to PATH in ${rc_file}"
+    log "Run: source ${rc_file} (or restart your shell)"
   fi
 }
 
@@ -135,24 +142,25 @@ create_config() {
 
   "${INSTALL_DIR}/${BINARY}" setup --write-config || true
 
-  echo ""
-  echo "Done! Edit ${config_file} to enable tracing:"
-  echo "  Set TRACE_TO_LANGFUSE=true and add your LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY."
-  echo ""
-  echo "Environment variables override the config file if you need per-project overrides."
+  log ""
+  log "Done! Edit ${config_file} to enable tracing:"
+  log "  Set TRACE_TO_LANGFUSE=true and add your LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY."
+  log ""
+  log "Environment variables override the config file if you need per-project overrides."
 }
 
 main() {
   # Parse flags
   INSTALL_OPENCODE=false
-  if [ "${1:-}" = "--opencode" ] || [ "${1:-}" = "-o" ]; then
-    INSTALL_OPENCODE=true
-  fi
-
   INSTALL_PI=false
-  if [ "${1:-}" = "--pi" ] || [ "${1:-}" = "-p" ]; then
-    INSTALL_PI=true
-  fi
+  QUIET=false
+  for arg in "$@"; do
+    case "${arg}" in
+      --opencode|-o) INSTALL_OPENCODE=true ;;
+      --pi|-p)       INSTALL_PI=true ;;
+      --quiet|-q)    QUIET=true ;;
+    esac
+  done
 
   resolve_target
   install_binary
