@@ -17,7 +17,7 @@ This project sends Claude Code and OpenCode session traces to Langfuse for obser
 - `src/transcript.rs` — reads Claude Code JSONL transcript
 - `src/turns.rs` — groups messages into user/assistant/tool turns
 - `src/emit.rs` — builds Langfuse ingestion batch
-- `src/tags.rs` — gathers env tags (repo, branch, user, host, os, agent version)
+- `src/tags.rs` — gathers env tags (repo, org, branch, user, host, os, agent version)
 - `src/state.rs` — persisted cursor state per session
 - `src/log.rs` — logging to `~/.local/share/code-trace/`
 - `plugin/pi-agent/code-trace.ts` — pi extension

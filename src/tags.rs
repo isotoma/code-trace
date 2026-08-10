@@ -29,6 +29,47 @@ pub fn cwd_in_git_repo(cwd: Option<&str>) -> bool {
     git_cmd(&["rev-parse", "--is-inside-work-tree"], cwd).as_deref() == Some("true")
 }
 
+/// Extract the owning organisation (or user) from a git remote URL.
+///
+/// Handles the common forms:
+/// - `git@github.com:orgname/reponame.git`
+/// - `ssh://git@github.com/orgname/reponame.git`
+/// - `https://github.com/orgname/reponame.git`
+/// - `https://github.com/orgname/reponame`
+///
+/// The organisation is the path segment immediately preceding the repo name.
+/// Returns `None` for URLs we can't parse (e.g. local paths).
+fn org_from_remote_url(url: &str) -> Option<String> {
+    // Strip a trailing `.git` so the repo name segment is clean.
+    let url = url.trim().trim_end_matches(".git");
+
+    // Normalise the SCP-style `host:org/repo` into `host/org/repo`.
+    let path = match url.split_once("://") {
+        // ssh://git@github.com/org/repo or https://github.com/org/repo
+        Some((_, rest)) => {
+            let after_host = rest.split_once('/').map(|(_, h)| h).unwrap_or(rest);
+            after_host
+        }
+        None => match url.split_once(':') {
+            // git@github.com:org/repo
+            Some((_, rest)) => rest,
+            None => return None, // local path or unparseable
+        },
+    };
+
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // Need at least `org/repo`.
+    if segments.len() < 2 {
+        return None;
+    }
+    let org = segments[segments.len() - 2];
+    if org.is_empty() {
+        None
+    } else {
+        Some(org.to_string())
+    }
+}
+
 pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<&str>) -> Vec<String> {
     let mut tags = vec![source.agent_tag().to_string()];
 
@@ -42,6 +83,13 @@ pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<
     if let Some(toplevel) = git_cmd(&["rev-parse", "--show-toplevel"], cwd) {
         if let Some(name) = std::path::Path::new(&toplevel).file_name() {
             tags.push(format!("repo:{}", name.to_string_lossy()));
+        }
+    }
+
+    // Git organisation (owner) from the origin remote URL.
+    if let Some(url) = git_cmd(&["remote", "get-url", "origin"], cwd) {
+        if let Some(org) = org_from_remote_url(&url) {
+            tags.push(format!("org:{org}"));
         }
     }
 
@@ -160,5 +208,80 @@ mod tests {
         assert!(tags.contains(&"pi-version:1.0.0".to_string()));
         assert!(!tags.iter().any(|t| t.starts_with("cc-version:")));
         assert!(!tags.iter().any(|t| t.starts_with("oc-version:")));
+    }
+
+    #[test]
+    fn org_from_ssh_url() {
+        assert_eq!(
+            org_from_remote_url("git@github.com:acme/widgets.git"),
+            Some("acme".to_string())
+        );
+    }
+
+    #[test]
+    fn org_from_https_url() {
+        assert_eq!(
+            org_from_remote_url("https://github.com/acme/widgets.git"),
+            Some("acme".to_string())
+        );
+    }
+
+    #[test]
+    fn org_from_ssh_protocol_url() {
+        assert_eq!(
+            org_from_remote_url("ssh://git@github.com/acme/widgets.git"),
+            Some("acme".to_string())
+        );
+    }
+
+    #[test]
+    fn org_from_https_url_without_git_suffix() {
+        assert_eq!(
+            org_from_remote_url("https://github.com/acme/widgets"),
+            Some("acme".to_string())
+        );
+    }
+
+    #[test]
+    fn org_from_gitlab_subgroup_url() {
+        assert_eq!(
+            org_from_remote_url("git@gitlab.com:acme/platform/widgets.git"),
+            Some("platform".to_string())
+        );
+    }
+
+    #[test]
+    fn org_from_local_path_returns_none() {
+        assert_eq!(org_from_remote_url("/home/doug/projects/widgets"), None);
+    }
+
+    #[test]
+    fn org_tag_emitted_when_remote_present() {
+        let repo = tempfile::TempDir::new().unwrap();
+        let repo_path = repo.path().to_string_lossy().to_string();
+        assert!(git_cmd(&["init"], Some(&repo_path)).is_some());
+        // `git remote add` produces no stdout, so check exit status directly.
+        let status = Command::new("git")
+            .args(["remote", "add", "origin", "git@github.com:acme/widgets.git"])
+            .current_dir(&repo_path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let tags = gather_env_tags(Source::ClaudeCode, Some(&repo_path), None);
+        assert!(
+            tags.contains(&"org:acme".to_string()),
+            "expected org:acme in {tags:?}"
+        );
+    }
+
+    #[test]
+    fn no_org_tag_without_remote() {
+        let repo = tempfile::TempDir::new().unwrap();
+        let repo_path = repo.path().to_string_lossy().to_string();
+        assert!(git_cmd(&["init"], Some(&repo_path)).is_some());
+
+        let tags = gather_env_tags(Source::ClaudeCode, Some(&repo_path), None);
+        assert!(!tags.iter().any(|t| t.starts_with("org:")));
     }
 }
