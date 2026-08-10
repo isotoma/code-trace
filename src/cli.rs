@@ -1,4 +1,4 @@
-use crate::{langfuse, log, payload, state};
+use crate::{langfuse, log, payload, state, tags};
 use std::io::BufRead;
 
 /// SessionStart handler. Records the session, prints a one-line tracing
@@ -36,6 +36,8 @@ pub fn on_start() -> i32 {
     };
     let message = if suppressed {
         "code-trace: tracing PAUSED for this session (private mode).".to_string()
+    } else if langfuse::require_git_repo() && !tags::cwd_in_git_repo(cwd.as_deref()) {
+        "code-trace: tracing inactive (not in a git repository).".to_string()
     } else {
         format!(
             "⚠️ code-trace: tracing ENABLED → {}. Use the pause command to make this session private.",
@@ -52,7 +54,13 @@ pub fn on_start() -> i32 {
 
 pub fn status() -> i32 {
     match (langfuse::tracing_enabled(), langfuse::config_from_env()) {
-        (true, Some(config)) => println!("tracing: ENABLED → {}", config.host),
+        (true, Some(config)) => {
+            if langfuse::require_git_repo() && !tags::cwd_in_git_repo(None) {
+                println!("tracing: inactive (not in a git repository)");
+            } else {
+                println!("tracing: ENABLED → {}", config.host);
+            }
+        }
         (true, None) => println!("tracing: not configured (TRACE_TO_LANGFUSE set but keys missing)"),
         (false, Some(_)) => println!("tracing: disabled (keys configured, TRACE_TO_LANGFUSE not true)"),
         (false, None) => println!("tracing: not configured"),
