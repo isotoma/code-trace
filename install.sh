@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="isotoma/code-trace"
 BINARY="code-trace"
 INSTALL_DIR="${HOME}/.local/bin"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 
 # Resolve platform target triple into the global TARGET.
