@@ -118,9 +118,9 @@ register_claude_code_hook() {
 # plugin source, so this works under curl | bash with no local checkout.
 maybe_install_opencode() {
   if [ "${INSTALL_OPENCODE}" = true ]; then
-    "${INSTALL_DIR}/${BINARY}" setup --install-opencode || true
+    "${INSTALL_DIR}/${BINARY}" setup ${NO_PROMPT:+--no-prompt} --install-opencode || true
   else
-    "${INSTALL_DIR}/${BINARY}" setup --offer-opencode || true
+    "${INSTALL_DIR}/${BINARY}" setup ${NO_PROMPT:+--no-prompt} --offer-opencode || true
   fi
 }
 
@@ -128,9 +128,9 @@ maybe_install_opencode() {
 # detected). As above, the binary owns detection, the prompt, and the source.
 maybe_install_pi() {
   if [ "${INSTALL_PI}" = true ]; then
-    "${INSTALL_DIR}/${BINARY}" setup --install-pi || true
+    "${INSTALL_DIR}/${BINARY}" setup ${NO_PROMPT:+--no-prompt} --install-pi || true
   else
-    "${INSTALL_DIR}/${BINARY}" setup --offer-pi || true
+    "${INSTALL_DIR}/${BINARY}" setup ${NO_PROMPT:+--no-prompt} --offer-pi || true
   fi
 }
 
@@ -140,7 +140,7 @@ maybe_install_pi() {
 create_config() {
   local config_file="${XDG_CONFIG_HOME:-${HOME}/.config}/code-trace/config"
 
-  "${INSTALL_DIR}/${BINARY}" setup --write-config || true
+  "${INSTALL_DIR}/${BINARY}" setup ${NO_PROMPT:+--no-prompt} --write-config || true
 
   log ""
   log "Done! Edit ${config_file} to enable tracing:"
@@ -161,6 +161,12 @@ main() {
       --quiet|-q)    QUIET=true ;;
     esac
   done
+
+  # In quiet mode, suppress the binary's interactive prompts too.
+  NO_PROMPT=false
+  if [ "${QUIET}" = true ]; then
+    NO_PROMPT=true
+  fi
 
   resolve_target
   install_binary

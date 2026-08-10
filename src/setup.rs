@@ -386,6 +386,7 @@ fn prompt_yes_no(question: &str) -> Option<bool> {
 fn offer_or_install(
     force: bool,
     detected: bool,
+    no_prompt: bool,
     target: &Path,
     contents: &str,
     detected_line: &str,
@@ -394,7 +395,7 @@ fn offer_or_install(
 ) -> i32 {
     let should_install = if force {
         true
-    } else if detected {
+    } else if detected && !no_prompt {
         println!();
         println!("{detected_line}");
         println!("  {}", target.display());
@@ -508,6 +509,7 @@ pub fn run(args: &[String]) -> i32 {
         code |= offer_or_install(
             install_opencode,
             opencode_detected(&home),
+            no_prompt,
             &opencode_plugin_path(&home),
             OPENCODE_PLUGIN,
             "OpenCode detected. Install the code-trace plugin?",
@@ -520,6 +522,7 @@ pub fn run(args: &[String]) -> i32 {
         code |= offer_or_install(
             install_pi,
             pi_detected(&home),
+            no_prompt,
             &pi_extension_path(&home),
             PI_EXTENSION,
             "Pi Agent detected. Install the code-trace extension?",
