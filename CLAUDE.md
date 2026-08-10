@@ -49,3 +49,18 @@ Integration tests share `tests/support/` (env-isolated `TestEnv`, payload builde
 5. Update `src/emit.rs` `build_ingestion_batch` for source-specific trace name/metadata
 6. Update `src/main.rs` match arm for the new source
 7. Update `tests/integration_test.rs` with fixture
+
+## Releasing
+
+Releases are a version bump + annotated git tag; a GitHub Action builds the
+release binaries on tag push.
+
+1. Bump `version` in `Cargo.toml` (patch/minor as appropriate)
+2. `cargo build` to refresh `Cargo.lock`
+3. Commit as `chore: release vX.Y.Z`
+4. `git tag vX.Y.Z` (lightweight tag is fine — push it explicitly, see below)
+5. `git push && git push origin vX.Y.Z`
+
+`git push --follow-tags` only pushes annotated tags. Use
+`git push origin vX.Y.Z` explicitly to ensure the tag reaches the remote and
+triggers the release workflow.
