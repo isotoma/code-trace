@@ -101,6 +101,7 @@ impl MockServer {
 struct TestEnv {
     home: TempDir,
     langfuse_url: Option<String>,
+    extra_env: Vec<(String, String)>,
 }
 
 impl TestEnv {
@@ -108,6 +109,7 @@ impl TestEnv {
         TestEnv {
             home: TempDir::new().unwrap(),
             langfuse_url: None,
+            extra_env: Vec::new(),
         }
     }
 
@@ -115,7 +117,15 @@ impl TestEnv {
         TestEnv {
             home: TempDir::new().unwrap(),
             langfuse_url: Some(url.to_string()),
+            extra_env: Vec::new(),
         }
+    }
+
+    /// Set an extra env var, applied last so it overrides the defaults (e.g.
+    /// re-enabling the git-repo gate that `command()` turns off).
+    fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.extra_env.push((key.to_string(), value.to_string()));
+        self
     }
 
     fn state_file(&self) -> std::path::PathBuf {
@@ -148,6 +158,9 @@ impl TestEnv {
                 .env("LANGFUSE_PUBLIC_KEY", "pk-test")
                 .env("LANGFUSE_SECRET_KEY", "sk-test")
                 .env("LANGFUSE_BASE_URL", url);
+        }
+        for (k, v) in &self.extra_env {
+            cmd.env(k, v);
         }
         cmd
     }
@@ -276,6 +289,58 @@ fn on_start_reports_paused_for_suppressed_session() {
         "got: {out}"
     );
     assert!(env.read_state().sessions["sess-private"].suppressed);
+}
+
+#[test]
+fn on_start_reports_inactive_outside_git_repo() {
+    let plain = TempDir::new().unwrap(); // not a git repo
+    let env = TestEnv::with_langfuse("http://127.0.0.1:9")
+        .with_env("CODE_TRACE_REQUIRE_GIT_REPO", "true");
+    let payload = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "session_id": "sess-nogit-start",
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": plain.path().to_string_lossy(),
+    })
+    .to_string();
+    let (code, out, _) = env.run(&["--on-start"], Some(&payload));
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    let msg = v["systemMessage"].as_str().unwrap_or("");
+    assert!(msg.contains("inactive"), "got: {out}");
+    assert!(!msg.contains("ENABLED"), "must not claim ENABLED: {out}");
+}
+
+#[test]
+fn on_start_reports_enabled_inside_git_repo() {
+    let repo = TempDir::new().unwrap();
+    let ok = Command::new("git")
+        .args(["init"])
+        .current_dir(repo.path())
+        .output()
+        .expect("git must be installed for this test")
+        .status
+        .success();
+    assert!(ok, "git init failed");
+
+    let env = TestEnv::with_langfuse("http://127.0.0.1:9")
+        .with_env("CODE_TRACE_REQUIRE_GIT_REPO", "true");
+    let payload = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "session_id": "sess-git-start",
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": repo.path().to_string_lossy(),
+    })
+    .to_string();
+    let (code, out, _) = env.run(&["--on-start"], Some(&payload));
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    assert!(
+        v["systemMessage"].as_str().unwrap_or("").contains("ENABLED"),
+        "got: {out}"
+    );
 }
 
 #[test]
