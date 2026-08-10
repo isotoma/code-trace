@@ -69,10 +69,18 @@ pub fn normalize_opencode_messages(messages: Vec<Value>) -> Vec<Value> {
                 .map(String::from)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-            let model = msg
-                .get("info")
-                .and_then(|v| v.get("model"))
+            let info = msg.get("info").unwrap_or(&Value::Null);
+            // OpenCode v2 puts modelID at top level of info; v1 nests it
+            // under info.metadata.assistant.modelID. Fall back to "opencode".
+            let model = info
+                .get("modelID")
                 .and_then(|v| v.as_str())
+                .or_else(|| {
+                    info.get("metadata")
+                        .and_then(|m| m.get("assistant"))
+                        .and_then(|a| a.get("modelID"))
+                        .and_then(|v| v.as_str())
+                })
                 .unwrap_or("opencode");
 
             let mut content_parts: Vec<Value> = Vec::new();
@@ -116,14 +124,23 @@ pub fn normalize_opencode_messages(messages: Vec<Value>) -> Vec<Value> {
                 pending_assistant_idx = Some(assistant_msg_idx);
             }
 
+            // OpenCode v2 carries token usage in info.tokens (with
+            // cache.read / cache.write); v1 nests it under
+            // info.metadata.assistant.tokens. Translate to the shape
+            // transcript::get_usage expects so emit.rs can price the turn.
+            let usage = extract_opencode_usage(info);
+            let mut message = serde_json::Map::new();
+            message.insert("id".to_string(), json!(id));
+            message.insert("role".to_string(), json!("assistant"));
+            message.insert("model".to_string(), json!(model));
+            message.insert("content".to_string(), json!(content_parts));
+            if let Some(u) = usage {
+                message.insert("usage".to_string(), u);
+            }
+
             let assistant_msg = json!({
                 "type": "assistant",
-                "message": {
-                    "id": id,
-                    "role": "assistant",
-                    "model": model,
-                    "content": content_parts,
-                }
+                "message": Value::Object(message),
             });
 
             if !pending_tool_results.is_empty() {
@@ -180,6 +197,39 @@ fn get_opencode_parts(msg: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// Pull token usage out of an OpenCode assistant info block and translate it
+/// to the `message.usage` shape `transcript::get_usage` consumes. Returns
+/// None when no tokens block is present, so emit.rs omits usageDetails
+/// rather than pricing the generation at $0.
+///
+/// Handles both v2 (`info.tokens`) and v1 (`info.metadata.assistant.tokens`).
+fn extract_opencode_usage(info: &Value) -> Option<Value> {
+    let tokens = info
+        .get("tokens")
+        .or_else(|| {
+            info.get("metadata")
+                .and_then(|m| m.get("assistant"))
+                .and_then(|a| a.get("tokens"))
+        })?;
+    let get = |k: &str| tokens.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cache_read = tokens
+        .get("cache")
+        .and_then(|c| c.get("read"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_write = tokens
+        .get("cache")
+        .and_then(|c| c.get("write"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(json!({
+        "input_tokens": get("input"),
+        "output_tokens": get("output"),
+        "cache_creation_input_tokens": cache_write,
+        "cache_read_input_tokens": cache_read,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,7 +250,7 @@ mod tests {
     #[test]
     fn normalizes_assistant_message_with_tool_use() {
         let msgs = vec![json!({
-            "info": { "id": "msg2", "role": "assistant", "model": "claude" },
+            "info": { "id": "msg2", "role": "assistant", "modelID": "claude" },
             "parts": [
                 { "type": "text", "text": "Let me check" },
                 { "type": "tool_use", "id": "tu1", "name": "Bash", "input": { "command": "ls" } }
@@ -209,8 +259,70 @@ mod tests {
         let normalized = normalize_opencode_messages(msgs);
         assert_eq!(normalized.len(), 1);
         assert_eq!(normalized[0]["type"], "assistant");
+        assert_eq!(normalized[0]["message"]["model"], "claude");
         assert_eq!(normalized[0]["message"]["content"][1]["type"], "tool_use");
         assert_eq!(normalized[0]["message"]["content"][1]["name"], "Bash");
+    }
+
+    #[test]
+    fn reads_model_from_v2_modelid() {
+        let msgs = vec![json!({
+            "info": { "id": "msg2", "role": "assistant", "modelID": "claude-opus-4-1" },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized[0]["message"]["model"], "claude-opus-4-1");
+    }
+
+    #[test]
+    fn reads_model_from_v1_metadata_assistant_modelid() {
+        let msgs = vec![json!({
+            "info": {
+                "id": "msg2",
+                "role": "assistant",
+                "metadata": { "assistant": { "modelID": "claude-3-5-sonnet" } }
+            },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized[0]["message"]["model"], "claude-3-5-sonnet");
+    }
+
+    #[test]
+    fn falls_back_to_opencode_when_model_missing() {
+        let msgs = vec![json!({
+            "info": { "id": "msg2", "role": "assistant" },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized[0]["message"]["model"], "opencode");
+    }
+
+    #[test]
+    fn extracts_v2_tokens_into_usage() {
+        let msgs = vec![json!({
+            "info": {
+                "id": "msg2", "role": "assistant", "modelID": "claude",
+                "tokens": { "input": 100, "output": 50, "cache": { "read": 10, "write": 20 } }
+            },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        let usage = &normalized[0]["message"]["usage"];
+        assert_eq!(usage["input_tokens"], 100);
+        assert_eq!(usage["output_tokens"], 50);
+        assert_eq!(usage["cache_read_input_tokens"], 10);
+        assert_eq!(usage["cache_creation_input_tokens"], 20);
+    }
+
+    #[test]
+    fn omits_usage_when_no_tokens_block() {
+        let msgs = vec![json!({
+            "info": { "id": "msg2", "role": "assistant", "modelID": "claude" },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert!(normalized[0]["message"].get("usage").is_none());
     }
 
     #[test]

@@ -74,7 +74,7 @@ fn end_to_end_opencode_transcript() {
             "parts": [{ "type": "text", "text": "Hello" }]
         }),
         json!({
-            "info": { "id": "msg_2", "role": "assistant", "model": "claude-sonnet-4-20250514" },
+            "info": { "id": "msg_2", "role": "assistant", "modelID": "claude-sonnet-4-20250514", "tokens": { "input": 12, "output": 34, "cache": { "read": 0, "write": 0 } } },
             "parts": [
                 { "type": "text", "text": "Hi there!" },
                 { "type": "tool_use", "id": "tu_1", "name": "Bash", "input": { "command": "ls" } }
@@ -107,8 +107,9 @@ fn end_to_end_opencode_transcript() {
     assert_eq!(events[0]["type"], "trace-create");
     assert_eq!(events[0]["body"]["name"], "OpenCode - Turn 1");
     assert_eq!(events[0]["body"]["metadata"]["source"], "opencode");
-    // OpenCode messages don't carry usage data through normalization yet.
-    assert!(events[1]["body"].get("usageDetails").is_none());
+    assert_eq!(events[1]["body"]["model"], "claude-sonnet-4-20250514");
+    assert_eq!(events[1]["body"]["usageDetails"]["input"], 12);
+    assert_eq!(events[1]["body"]["usageDetails"]["output"], 34);
 }
 
 #[test]
