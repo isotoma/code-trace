@@ -198,17 +198,23 @@ This is **best-effort**: it catches secrets with recognizable shapes but will mi
 
 ### Startup reminder (`--on-start`)
 
-Wired as a Claude Code `SessionStart` hook, `code-trace --on-start` records the session and emits a JSON `systemMessage` — `tracing ENABLED → <host>` or `tracing PAUSED for this session` — which Claude Code shows to the **user** as a terminal banner (not injected into the model's context; the warning is for the human). It prints nothing when tracing is not configured, and never emits traces.
+`code-trace --on-start` records the session and, when tracing is enabled, prints a one-line reminder — `tracing ENABLED → <host>`, `tracing PAUSED for this session`, or `tracing inactive (not in a git repository)`. It prints nothing when tracing is not configured, and never emits traces.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "code-trace --on-start" }] }
-    ]
+How each agent surfaces that reminder to the **user** (never to the model):
+
+- **Claude Code** — wired as a `SessionStart` hook; the binary emits a JSON `systemMessage`, which Claude Code renders as a terminal banner.
+
+  ```json
+  {
+    "hooks": {
+      "SessionStart": [
+        { "hooks": [{ "type": "command", "command": "code-trace --on-start" }] }
+      ]
+    }
   }
-}
-```
+  ```
+
+- **OpenCode** — the plugin hooks the `session.created` event (root sessions only) and spawns `code-trace --on-start` with an OpenCode-shaped payload. The binary replies with a structured JSON `{ "codeTrace": { "level", "message" } }`, and the plugin renders it as a TUI toast (`warning` when tracing is ENABLED, `info` otherwise). Subagent (Task tool) sessions are filtered out so a delegation doesn't pop a banner. In headless `opencode run` (no TUI) the toast is a no-op.
 
 ### Purge
 
@@ -234,10 +240,11 @@ Caveats: deleting the transcript removes the session from Claude Code's `--resum
 
 ### OpenCode
 
-1. The OpenCode plugin hooks into the `session.idle` event after each assistant response
-2. It fetches new messages since the last processed message (tracked per-session in `~/.local/share/code-trace/opencode_cursor.json`)
-3. Messages are assembled into turns and piped to the `code-trace` binary over stdin
-4. The binary forks — the parent returns immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
+1. The OpenCode plugin shows the tracing reminder as a TUI toast when a root session is created (`session.created`)
+2. The plugin hooks into the `session.idle` event after each assistant response
+3. It fetches new messages since the last processed message (tracked per-session in `~/.local/share/code-trace/opencode_cursor.json`)
+4. Messages are assembled into turns and piped to the `code-trace` binary over stdin
+5. The binary forks — the parent returns immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
 
 ### Pi
 

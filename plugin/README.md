@@ -59,6 +59,16 @@ On each idle event:
 3. A JSON payload is sent to the `code-trace` binary over stdin
 4. The binary forks — the parent returns immediately while the child sends the trace to Langfuse
 
+## Startup reminder
+
+The plugin also shows a tracing status banner to the **user** (never the model). When OpenCode creates a root session (`session.created`), the plugin runs `code-trace --on-start` with an OpenCode-shaped payload and renders the reply as a TUI toast:
+
+- `code-trace: tracing ENABLED → <host>` — warning toast
+- `code-trace: tracing PAUSED for this session` — info toast
+- `code-trace: tracing inactive (not in a git repository)` — info toast
+
+Subagent (Task tool) sessions are ignored, and nothing is shown when tracing is unconfigured or when no TUI is attached (headless `opencode run`).
+
 ## What you get in Langfuse
 
 Each turn produces:

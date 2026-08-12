@@ -343,6 +343,72 @@ fn on_start_reports_enabled_inside_git_repo() {
     );
 }
 
+/// OpenCode's plugin renders `--on-start` output as a TUI toast; it expects a
+/// structured `codeTrace` object (level + message), not the Claude `systemMessage`.
+#[test]
+fn on_start_opencode_emits_code_trace_shape_enabled_warning() {
+    let repo = TempDir::new().unwrap();
+    assert!(Command::new("git").args(["init"]).current_dir(repo.path()).output().expect("git").status.success());
+    let env = TestEnv::with_langfuse("http://127.0.0.1:9");
+    let payload = serde_json::json!({
+        "source": "opencode",
+        "sessionId": "ses-oc-start",
+        "cwd": repo.path().to_string_lossy(),
+    })
+    .to_string();
+    let (code, out, _) = env.run(&["--on-start"], Some(&payload));
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    assert!(v.get("systemMessage").is_none(), "opencode should not get a Claude systemMessage: {out}");
+    let ct = &v["codeTrace"];
+    assert_eq!(ct["level"], "warning", "got: {out}");
+    assert!(ct["message"].as_str().unwrap_or("").contains("ENABLED"), "got: {out}");
+    let state = env.read_state();
+    assert_eq!(state.sessions["ses-oc-start"].source, "opencode");
+}
+
+#[test]
+fn on_start_opencode_emits_code_trace_shape_paused_info() {
+    let env = TestEnv::with_langfuse("http://127.0.0.1:9");
+    let mut state = State::default();
+    state.sessions.insert(
+        "ses-oc-paused".into(),
+        make_record("ses-oc-paused", None, true, 1),
+    );
+    env.write_state(&state);
+    let payload = serde_json::json!({
+        "source": "opencode",
+        "sessionId": "ses-oc-paused",
+        "cwd": "/tmp",
+    })
+    .to_string();
+    let (code, out, _) = env.run(&["--on-start"], Some(&payload));
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    let ct = &v["codeTrace"];
+    assert_eq!(ct["level"], "info", "got: {out}");
+    assert!(ct["message"].as_str().unwrap_or("").contains("PAUSED"), "got: {out}");
+}
+
+#[test]
+fn on_start_opencode_emits_code_trace_shape_inactive_info() {
+    let plain = TempDir::new().unwrap(); // not a git repo
+    let env = TestEnv::with_langfuse("http://127.0.0.1:9")
+        .with_env("CODE_TRACE_REQUIRE_GIT_REPO", "true");
+    let payload = serde_json::json!({
+        "source": "opencode",
+        "sessionId": "ses-oc-nogit",
+        "cwd": plain.path().to_string_lossy(),
+    })
+    .to_string();
+    let (code, out, _) = env.run(&["--on-start"], Some(&payload));
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("on-start emits JSON");
+    let ct = &v["codeTrace"];
+    assert_eq!(ct["level"], "info", "got: {out}");
+    assert!(ct["message"].as_str().unwrap_or("").contains("inactive"), "got: {out}");
+}
+
 #[test]
 fn pause_targets_most_recent_and_resume_clears() {
     let env = TestEnv::new();

@@ -34,21 +34,42 @@ pub fn on_start() -> i32 {
     let Some(config) = langfuse::config_from_env() else {
         return 0;
     };
-    let message = if suppressed {
-        "code-trace: tracing PAUSED for this session (private mode).".to_string()
+    // Each integration renders its own user-facing banner. The single shared
+    // message is computed here so every source reports identically; only the
+    // JSON envelope (and the human's terminal, on which it is shown) differs.
+    let (level, message): (&str, String) = if suppressed {
+        (
+            "info",
+            "code-trace: tracing PAUSED for this session (private mode).".to_string(),
+        )
     } else if langfuse::require_git_repo() && !tags::cwd_in_git_repo(cwd.as_deref()) {
-        "code-trace: tracing inactive (not in a git repository).".to_string()
+        (
+            "info",
+            "code-trace: tracing inactive (not in a git repository).".to_string(),
+        )
     } else {
-        format!(
-            "⚠️ code-trace: tracing ENABLED → {}. Use the pause command to make this session private.",
-            config.host
+        (
+            "warning",
+            format!(
+                "⚠️ code-trace: tracing ENABLED → {}. Use the pause command to make this session private.",
+                config.host
+            ),
         )
     };
-    // Surface the reminder to the USER via a SessionStart `systemMessage`
-    // (top-level JSON, exit 0), which Claude Code renders as a terminal banner.
-    // Plain stdout would instead be injected into the model's context — invisible
-    // to the user, which is who this warning is for.
-    println!("{}", serde_json::json!({ "systemMessage": message }));
+
+    // Claude Code: emit a top-level `systemMessage` (exit 0) which the hook
+    // framework renders as a terminal banner for the USER. Plain stdout would
+    // instead be injected into the model's context — invisible to the human,
+    // which is who this warning is for.
+    //
+    // OpenCode / Pi: there is no `systemMessage` hook contract, so emit a
+    // structured `codeTrace` object the plugin/extension renders as its own
+    // user-facing toast/notice.
+    let out = match input.source() {
+        crate::source::Source::ClaudeCode => serde_json::json!({ "systemMessage": message }),
+        _ => serde_json::json!({ "codeTrace": { "level": level, "message": message } }),
+    };
+    println!("{}", out);
     0
 }
 
