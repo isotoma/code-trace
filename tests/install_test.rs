@@ -308,8 +308,40 @@ fn offer_opencode_skips_when_not_detected() {
 }
 
 #[test]
+fn offer_opencode_installs_when_detected_without_prompt() {
+    // Regression: a non-interactive install (curl | bash, no tty) previously
+    // skipped the plugin even when OpenCode was present, because the offer path
+    // prompted and, with no terminal, the prompt returned None. Detection must
+    // now be treated as consent and install without asking.
+    let home = scratch("oc-offer-present");
+    std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+    assert!(setup_with_home(&home, &["--offer-opencode"]).status.success());
+    let installed = home.join(".config/opencode/plugins/code-trace.ts");
+    assert!(installed.exists(), "must install when OpenCode is detected");
+    assert_eq!(
+        std::fs::read_to_string(&installed).unwrap(),
+        repo_file("plugin/opencode/code-trace.ts"),
+        "installed plugin must match the embedded source"
+    );
+}
+
+#[test]
 fn offer_pi_skips_when_not_detected() {
     let home = scratch("pi-offer-absent");
     assert!(setup_with_home(&home, &["--offer-pi"]).status.success());
     assert!(!home.join(".pi/agent/extensions/code-trace.ts").exists());
+}
+
+#[test]
+fn offer_pi_installs_when_detected_without_prompt() {
+    let home = scratch("pi-offer-present");
+    std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
+    assert!(setup_with_home(&home, &["--offer-pi"]).status.success());
+    let installed = home.join(".pi/agent/extensions/code-trace.ts");
+    assert!(installed.exists(), "must install when Pi Agent is detected");
+    assert_eq!(
+        std::fs::read_to_string(&installed).unwrap(),
+        repo_file("plugin/pi-agent/code-trace.ts"),
+        "installed extension must match the embedded source"
+    );
 }

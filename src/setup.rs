@@ -370,42 +370,29 @@ fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "~".to_string()))
 }
 
-/// Ask a yes/no question on the terminal. None when no terminal is available;
-/// otherwise true only for an exact `y`/`Y`, matching the previous shell prompt.
-fn prompt_yes_no(question: &str) -> Option<bool> {
-    use std::io::Write;
-    eprint!("{question}");
-    let _ = std::io::stderr().flush();
-    let line = read_terminal_line()?;
-    let answer = line.trim();
-    Some(answer == "y" || answer == "Y")
-}
-
-/// Install an agent plugin/extension, either forced or offered (detected +
-/// confirmed at the prompt). Returns a process exit code (0 = success/skipped).
-fn offer_or_install(
+/// Install an agent plugin/extension when the agent is detected, or when
+/// forced (e.g. `--install-opencode` prepares the plugin even before the agent
+/// is ever launched). Detection alone is treated as consent: a non-interactive
+/// `curl | bash` install previously prompted (and, with no tty, silently skipped),
+/// leaving the plugin uninstalled on machines that did have the agent. Now a
+/// detected agent installs without asking. Returns a process exit code
+/// (0 = success/skipped).
+fn install_if_detected(
     force: bool,
     detected: bool,
-    no_prompt: bool,
     target: &Path,
     contents: &str,
     detected_line: &str,
-    question: &str,
     installed_line: &str,
 ) -> i32 {
-    let should_install = if force {
-        true
-    } else if detected && !no_prompt {
+    if !force && !detected {
+        return 0;
+    }
+
+    if detected {
         println!();
         println!("{detected_line}");
         println!("  {}", target.display());
-        matches!(prompt_yes_no(question), Some(true))
-    } else {
-        false
-    };
-
-    if !should_install {
-        return 0;
     }
 
     match install_plugin(target, contents) {
@@ -506,27 +493,23 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     if install_opencode || offer_opencode {
-        code |= offer_or_install(
+        code |= install_if_detected(
             install_opencode,
             opencode_detected(&home),
-            no_prompt,
             &opencode_plugin_path(&home),
             OPENCODE_PLUGIN,
-            "OpenCode detected. Install the code-trace plugin?",
-            "Install OpenCode plugin? [y/N] ",
+            "OpenCode detected — installing the code-trace plugin.",
             "Installed OpenCode plugin to",
         );
     }
 
     if install_pi || offer_pi {
-        code |= offer_or_install(
+        code |= install_if_detected(
             install_pi,
             pi_detected(&home),
-            no_prompt,
             &pi_extension_path(&home),
             PI_EXTENSION,
-            "Pi Agent detected. Install the code-trace extension?",
-            "Install Pi Agent extension? [y/N] ",
+            "Pi Agent detected — installing the code-trace extension.",
             "Installed Pi Agent extension to",
         );
     }
