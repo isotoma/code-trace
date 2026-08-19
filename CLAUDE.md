@@ -38,7 +38,7 @@ cargo build --release
 cargo test
 ```
 
-Integration tests share `tests/support/` (env-isolated `TestEnv`, payload builders, in-process fake Langfuse). `tests/concurrency_test.rs` is the Track 2 race suite; tests `#[ignore]`d "red until fix-state-locking" are expected failures demonstrating the non-blocking-flock bug. `CODE_TRACE_SYNC_SEND=1` makes sends inline (no fork) for exact delivery assertions. The Track 1 container harness (real `claude` + stub model API + fake Langfuse) lives in `harness/` — see `harness/README.md`.
+Integration tests share `tests/support/` (env-isolated `TestEnv`, payload builders, in-process fake Langfuse). `tests/concurrency_test.rs` is the Track 2 race suite; tests `#[ignore]`d "red until fix-state-locking" are expected failures demonstrating the non-blocking-flock bug. `tests/source_system_test.rs` covers system-level OpenCode and PiAgent pipelines (stdin → binary → fake Langfuse), mirroring the Claude Code coverage in `cli_test.rs`/`concurrency_test.rs`. `CODE_TRACE_SYNC_SEND=1` makes sends inline (no fork) for exact delivery assertions. The Track 1 container harness (real `claude` + stub model API + fake Langfuse) lives in `harness/` — see `harness/README.md`.
 
 ## Adding a new source
 

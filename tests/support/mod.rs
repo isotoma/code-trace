@@ -8,6 +8,7 @@ pub mod fake_langfuse;
 pub use fake_langfuse::FakeLangfuse;
 
 use code_trace::state::State;
+use serde_json::Value;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -152,6 +153,31 @@ pub fn session_start_payload(session_id: &str, transcript: &Path, source: &str) 
         "session_id": session_id,
         "transcript_path": transcript.to_string_lossy(),
         "cwd": "/tmp"
+    })
+    .to_string()
+}
+
+/// OpenCode plugin payload: messages in the OpenCode SDK format. The cwd is
+/// `/tmp` (non-git); `TestEnv::command()` already disables the git gate.
+pub fn opencode_payload(session_id: &str, messages: &[Value]) -> String {
+    serde_json::json!({
+        "source": "opencode",
+        "sessionId": session_id,
+        "cwd": "/tmp",
+        "messages": messages,
+        "agentVersion": "0.4.5"
+    })
+    .to_string()
+}
+
+/// Pi Agent extension payload: messages in the Pi session entry format.
+pub fn pi_agent_payload(session_id: &str, messages: &[Value]) -> String {
+    serde_json::json!({
+        "source": "pi-agent",
+        "sessionId": session_id,
+        "cwd": "/tmp",
+        "messages": messages,
+        "agentVersion": "1.0.0"
     })
     .to_string()
 }
