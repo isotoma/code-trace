@@ -113,18 +113,6 @@ pub fn build_ingestion_batch(
         },
     );
 
-    // Mirror the OpenCode TUI "Context" panel: the last assistant step of
-    // the turn with output > 0. Omitted (not zero) when no qualifying step
-    // exists, so Langfuse never records a synthetic 0 context size.
-    let context_size = turn
-        .assistant_msgs
-        .iter()
-        .rev()
-        .find(|m| {
-            matches!(transcript::get_usage(m), Some(u) if u.output_tokens > 0)
-        })
-        .and_then(transcript::get_context_size);
-
     let trace_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -208,6 +196,21 @@ pub fn build_ingestion_batch(
             "cache_read_input_tokens".to_string(),
             json!(usage.cache_read_input_tokens),
         );
+        // Mirror the OpenCode TUI "Context" panel: the last assistant step of
+        // the turn with output > 0. Omitted (not zero) when no qualifying step
+        // exists, so Langfuse never records a synthetic 0 context size. The
+        // reverse scan reads each candidate message's usage once — deriving
+        // both the `output_tokens > 0` guard and the context-size sum from
+        // that single borrow — and only runs at all because usage exists here.
+        let context_size = turn
+            .assistant_msgs
+            .iter()
+            .rev()
+            .find_map(|m| {
+                let usage = transcript::get_usage(m)?;
+                (usage.output_tokens > 0)
+                    .then_some(transcript::get_context_size(m).unwrap_or(0))
+            });
         if let Some(cs) = context_size {
             details.insert("current_context_size".to_string(), json!(cs));
         }
@@ -543,6 +546,11 @@ mod tests {
         // current_context_size mirrors the OpenCode Context panel: the last
         // assistant step's own context size (40+8+1+2+3), NOT the sum (AC1.2).
         assert_eq!(usage["current_context_size"], 54);
+        // Exactly the standard keys — msg B's reasoning_tokens (3) must not leak
+        // into the emitted usageDetails.
+        let mut keys: Vec<&str> = usage.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["cache_creation_input_tokens", "cache_read_input_tokens", "current_context_size", "input", "output"]);
     }
 
     #[test]
