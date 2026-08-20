@@ -34,6 +34,9 @@ fn end_to_end_simple_transcript() {
     assert_eq!(events[1]["body"]["model"], "claude-sonnet-4-20250514");
     assert_eq!(events[1]["body"]["usageDetails"]["input"], 12);
     assert_eq!(events[1]["body"]["usageDetails"]["output"], 34);
+    // current_context_size = 12 + 34 + 0 + 0 = 46 (no reasoning_tokens in
+    // Claude Code transcripts → 4-field Anthropic formula). AC2.1.
+    assert_eq!(events[1]["body"]["usageDetails"]["current_context_size"], 46);
 }
 
 #[test]
