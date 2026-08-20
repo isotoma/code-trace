@@ -179,4 +179,7 @@ fn end_to_end_pi_agent_transcript() {
     assert_eq!(events[0]["type"], "trace-create");
     assert!(events[0]["body"]["name"].as_str().unwrap().starts_with("Pi Agent"));
     assert_eq!(events[0]["body"]["metadata"]["source"], "pi-agent");
+
+    // AC5.1: Pi traces carry no usage block → no usageDetails, no current_context_size.
+    assert!(events[1]["body"].get("usageDetails").is_none());
 }
