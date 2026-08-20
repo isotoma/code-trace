@@ -207,7 +207,7 @@ pub fn build_ingestion_batch(
             .rev()
             .find_map(|m| {
                 let usage = transcript::get_usage(m)?;
-                // Flatten keeps the "absent ≠ zero" contract intact: if
+                // The ? above keeps the "absent ≠ zero" contract intact: if
                 // get_context_size ever diverges from get_usage's guard, the
                 // metric disappears rather than synthesising a 0.
                 if usage.output_tokens > 0 {
