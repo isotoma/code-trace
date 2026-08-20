@@ -306,6 +306,21 @@ mod tests {
     }
 
     #[test]
+    fn get_context_size_missing_fields_default_to_zero() {
+        let v: Value = serde_json::from_str(
+            r#"{"message":{"role":"assistant","usage":{"input_tokens":7}}}"#,
+        )
+        .unwrap();
+        assert_eq!(get_context_size(&v), Some(7));
+    }
+
+    #[test]
+    fn get_context_size_absent_block_returns_none() {
+        let v: Value = serde_json::from_str(r#"{"message":{"role":"assistant"}}"#).unwrap();
+        assert!(get_context_size(&v).is_none());
+    }
+
+    #[test]
     fn is_tool_result_detects_correctly() {
         let v: Value = serde_json::json!({
             "type": "user",
