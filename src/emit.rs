@@ -113,6 +113,18 @@ pub fn build_ingestion_batch(
         },
     );
 
+    // Mirror the OpenCode TUI "Context" panel: the last assistant step of
+    // the turn with output > 0. Omitted (not zero) when no qualifying step
+    // exists, so Langfuse never records a synthetic 0 context size.
+    let context_size = turn
+        .assistant_msgs
+        .iter()
+        .rev()
+        .find(|m| {
+            matches!(transcript::get_usage(m), Some(u) if u.output_tokens > 0)
+        })
+        .and_then(transcript::get_context_size);
+
     let trace_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -185,15 +197,21 @@ pub fn build_ingestion_batch(
     // all, so Langfuse never prices a generation at $0 for a source that
     // simply doesn't report usage.
     if let Some(usage) = total_usage {
-        gen_body.insert(
-            "usageDetails".to_string(),
-            json!({
-                "input": usage.input_tokens,
-                "output": usage.output_tokens,
-                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-                "cache_read_input_tokens": usage.cache_read_input_tokens,
-            }),
+        let mut details = serde_json::Map::new();
+        details.insert("input".to_string(), json!(usage.input_tokens));
+        details.insert("output".to_string(), json!(usage.output_tokens));
+        details.insert(
+            "cache_creation_input_tokens".to_string(),
+            json!(usage.cache_creation_input_tokens),
         );
+        details.insert(
+            "cache_read_input_tokens".to_string(),
+            json!(usage.cache_read_input_tokens),
+        );
+        if let Some(cs) = context_size {
+            details.insert("current_context_size".to_string(), json!(cs));
+        }
+        gen_body.insert("usageDetails".to_string(), Value::Object(details));
     }
     events.push(json!({
         "id": uuid::Uuid::new_v4().to_string(),
@@ -481,6 +499,44 @@ mod tests {
         let usage = &events[1]["body"]["usageDetails"];
         assert_eq!(usage["input"], 25);
         assert_eq!(usage["output"], 13);
+    }
+
+    #[test]
+    fn current_context_size_uses_last_assistant_not_sum() {
+        use crate::source::Source;
+        let turn = Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":"Do something"}}),
+            assistant_msgs: vec![
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m1",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}],
+                        "usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"reasoning_tokens":0},
+                    }
+                }),
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m2",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"text","text":"Done"}],
+                        "usage":{"input_tokens":40,"output_tokens":8,"cache_creation_input_tokens":2,"cache_read_input_tokens":1,"reasoning_tokens":3},
+                    }
+                }),
+            ],
+            tool_results_by_id: HashMap::new(),
+        };
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
+        let usage = &events[1]["body"]["usageDetails"];
+        // Input is summed across both assistant messages (AC3.1 unchanged).
+        assert_eq!(usage["input"], 50);
+        // current_context_size mirrors the OpenCode Context panel: the last
+        // assistant step's own context size (40+8+1+2+3), NOT the sum (AC1.2).
+        assert_eq!(usage["current_context_size"], 54);
     }
 
     #[test]
