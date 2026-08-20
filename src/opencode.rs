@@ -227,6 +227,7 @@ fn extract_opencode_usage(info: &Value) -> Option<Value> {
         "output_tokens": get("output"),
         "cache_creation_input_tokens": cache_write,
         "cache_read_input_tokens": cache_read,
+        "reasoning_tokens": get("reasoning"),
     }))
 }
 
@@ -303,7 +304,7 @@ mod tests {
         let msgs = vec![json!({
             "info": {
                 "id": "msg2", "role": "assistant", "modelID": "claude",
-                "tokens": { "input": 100, "output": 50, "cache": { "read": 10, "write": 20 } }
+                "tokens": { "input": 100, "output": 50, "reasoning": 7, "cache": { "read": 10, "write": 20 } }
             },
             "parts": [{ "type": "text", "text": "hi" }]
         })];
@@ -313,6 +314,7 @@ mod tests {
         assert_eq!(usage["output_tokens"], 50);
         assert_eq!(usage["cache_read_input_tokens"], 10);
         assert_eq!(usage["cache_creation_input_tokens"], 20);
+        assert_eq!(usage["reasoning_tokens"], 7);
     }
 
     #[test]
