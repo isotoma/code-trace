@@ -208,8 +208,14 @@ pub fn build_ingestion_batch(
             .rev()
             .find_map(|m| {
                 let usage = transcript::get_usage(m)?;
-                (usage.output_tokens > 0)
-                    .then_some(transcript::get_context_size(m).unwrap_or(0))
+                // Flatten keeps the "absent ≠ zero" contract intact: if
+                // get_context_size ever diverges from get_usage's guard, the
+                // metric disappears rather than synthesising a 0.
+                if usage.output_tokens > 0 {
+                    transcript::get_context_size(m)
+                } else {
+                    None
+                }
             });
         if let Some(cs) = context_size {
             details.insert("current_context_size".to_string(), json!(cs));
