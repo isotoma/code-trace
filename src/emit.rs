@@ -199,9 +199,8 @@ pub fn build_ingestion_batch(
         // Mirror the OpenCode TUI "Context" panel: the last assistant step of
         // the turn with output > 0. Omitted (not zero) when no qualifying step
         // exists, so Langfuse never records a synthetic 0 context size. The
-        // reverse scan reads each candidate message's usage once — deriving
-        // both the `output_tokens > 0` guard and the context-size sum from
-        // that single borrow — and only runs at all because usage exists here.
+        // scan only runs at all because the turn has usage (`total_usage` is
+        // Some); the guard itself reads one message and never synthesises 0.
         let context_size = turn
             .assistant_msgs
             .iter()
