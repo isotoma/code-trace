@@ -464,6 +464,12 @@ mod tests {
         assert_eq!(usage["output"], 20);
         assert_eq!(usage["cache_creation_input_tokens"], 5);
         assert_eq!(usage["cache_read_input_tokens"], 3);
+        let mut keys: Vec<&str> = usage.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["cache_creation_input_tokens", "cache_read_input_tokens", "current_context_size", "input", "output"]);
+        // current_context_size = 4-field Anthropic sum (no reasoning_tokens in this
+        // fixture): input 10 + output 20 + cache_read 3 + cache_creation 5 = 38.
+        assert_eq!(usage["current_context_size"], 38);
     }
 
     #[test]
@@ -537,6 +543,69 @@ mod tests {
         // current_context_size mirrors the OpenCode Context panel: the last
         // assistant step's own context size (40+8+1+2+3), NOT the sum (AC1.2).
         assert_eq!(usage["current_context_size"], 54);
+    }
+
+    #[test]
+    fn current_context_size_omitted_when_no_output() {
+        use crate::source::Source;
+        let turn = Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":"Hello"}}),
+            assistant_msgs: vec![json!({
+                "type":"assistant",
+                "message":{
+                    "id":"m1",
+                    "role":"assistant",
+                    "model":"claude",
+                    "content":[{"type":"text","text":"Done"}],
+                    "usage":{"input_tokens":5,"output_tokens":0},
+                }
+            })],
+            tool_results_by_id: HashMap::new(),
+        };
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
+        let usage = &events[1]["body"]["usageDetails"];
+        // usageDetails still exists (summed input) but carries no current_context_size (AC4.2).
+        assert_eq!(usage["input"], 5);
+        assert!(usage.get("current_context_size").is_none());
+        // Exactly the four standard keys, nothing leaked.
+        let mut keys: Vec<&str> = usage.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["cache_creation_input_tokens", "cache_read_input_tokens", "input", "output"]);
+    }
+
+    #[test]
+    fn current_context_size_falls_back_to_earlier_step() {
+        use crate::source::Source;
+        let turn = Turn {
+            user_msg: json!({"type":"user","message":{"role":"user","content":"Do something"}}),
+            assistant_msgs: vec![
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m1",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}],
+                        "usage":{"input_tokens":10,"output_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},
+                    }
+                }),
+                json!({
+                    "type":"assistant",
+                    "message":{
+                        "id":"m2",
+                        "role":"assistant",
+                        "model":"claude",
+                        "content":[{"type":"text","text":"Done"}],
+                    }
+                }),
+            ],
+            tool_results_by_id: HashMap::new(),
+        };
+        let events = build_ingestion_batch("sess1", 1, &turn, Path::new("/tmp/t.jsonl"), &["claude-code".to_string()], Source::ClaudeCode, None);
+        let usage = &events[1]["body"]["usageDetails"];
+        // Reverse scan skips msg B (no usage block) and falls back to msg A
+        // (10+4+0+0 = 14), even though msg B is chronologically last (AC2.2).
+        assert_eq!(usage["current_context_size"], 14);
     }
 
     #[test]
