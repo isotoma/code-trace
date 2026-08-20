@@ -132,6 +132,22 @@ pub fn get_usage(msg: &Value) -> Option<Usage> {
     })
 }
 
+/// Context-window size for one assistant message, as the OpenCode TUI
+/// "Context" panel reports it: input + output + reasoning + cache read +
+/// cache write. Returns None when the message has no usage block, matching
+/// `get_usage`'s "absent ≠ zero" contract.
+pub fn get_context_size(msg: &Value) -> Option<u64> {
+    let u = msg.get("message")?.get("usage")?;
+    let get = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    Some(
+        get("input_tokens")
+            + get("output_tokens")
+            + get("reasoning_tokens")
+            + get("cache_read_input_tokens")
+            + get("cache_creation_input_tokens"),
+    )
+}
+
 /// Extract plain text from content (string or array of text blocks).
 pub fn extract_text(content: Option<&Value>) -> String {
     let Some(c) = content else {
@@ -273,6 +289,20 @@ mod tests {
     fn get_usage_absent_block_returns_none() {
         let v: Value = serde_json::from_str(r#"{"message":{"role":"assistant"}}"#).unwrap();
         assert!(get_usage(&v).is_none());
+    }
+
+    #[test]
+    fn get_context_size_sums_all_five_fields() {
+        let v: Value = serde_json::json!({
+            "message": {"role": "assistant", "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "reasoning_tokens": 5,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 2
+            }}
+        });
+        assert_eq!(get_context_size(&v), Some(40));
     }
 
     #[test]
