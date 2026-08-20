@@ -328,6 +328,24 @@ mod tests {
     }
 
     #[test]
+    fn extracts_v1_tokens_without_reasoning() {
+        // v1 nests token usage under info.metadata.assistant.tokens and
+        // predates the `reasoning` key, so reasoning_tokens must default to 0.
+        let msgs = vec![json!({
+            "info": {
+                "id": "msg2", "role": "assistant",
+                "metadata": { "assistant": { "modelID": "claude-3-5-sonnet", "tokens": { "input": 5, "output": 9, "cache": { "read": 1, "write": 2 } } } }
+            },
+            "parts": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        let usage = &normalized[0]["message"]["usage"];
+        assert_eq!(usage["reasoning_tokens"], 0);
+        assert_eq!(usage["input_tokens"], 5);
+        assert_eq!(usage["output_tokens"], 9);
+    }
+
+    #[test]
     fn pending_tool_results_attached_to_previous_assistant() {
         let msgs = vec![
             json!({
