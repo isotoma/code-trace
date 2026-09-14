@@ -52,19 +52,24 @@ pub fn config_from_env() -> Option<LangfuseConfig> {
 
 /// The Langfuse user id to attach to traces, if configured.
 ///
-/// Optional: when unset (or empty) traces carry no `userId` and Langfuse's
-/// user-scoped views simply won't group them. Typically an email address.
+/// Optional: when unset traces carry no `userId` and Langfuse's user-scoped
+/// views simply won't group them. Typically an email address.
 /// Accepts the `CC_LANGFUSE_` prefix like the other Langfuse variables.
+/// Falls back to `ISOTOMA_EMAIL` when neither Langfuse variable is set, so
+/// setups with the org-standard email variable get user-attributed traces
+/// without a separate config line.
 pub fn user_id_from_env() -> Option<String> {
     let raw = std::env::var("CC_LANGFUSE_USER_ID")
         .or_else(|_| std::env::var("LANGFUSE_USER_ID"))
         .unwrap_or_default();
     let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
+    if !trimmed.is_empty() {
+        return Some(trimmed.to_string());
     }
+    std::env::var("ISOTOMA_EMAIL")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn auth_header(config: &LangfuseConfig) -> String {
@@ -181,6 +186,61 @@ mod tests {
         assert!(require_git_repo(), "empty is not \"false\" -> restriction on");
 
         std::env::remove_var("CODE_TRACE_REQUIRE_GIT_REPO");
+    }
+
+    // user_id_from_env reads the LANGFUSE_* user id vars and ISOTOMA_EMAIL, so
+    // these tests serialise under the same lock as the other env-mutating tests.
+    #[test]
+    fn user_id_prefers_langfuse_vars_over_isotoma_email() {
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::set_var("CC_LANGFUSE_USER_ID", "explicit@example.com");
+        std::env::set_var("ISOTOMA_EMAIL", "fallback@example.com");
+        assert_eq!(
+            user_id_from_env(),
+            Some("explicit@example.com".to_string()),
+            "CC_LANGFUSE_USER_ID must win over ISOTOMA_EMAIL"
+        );
+        std::env::remove_var("CC_LANGFUSE_USER_ID");
+        std::env::set_var("LANGFUSE_USER_ID", "unprefixed@example.com");
+        assert_eq!(user_id_from_env(), Some("unprefixed@example.com".to_string()));
+        std::env::remove_var("LANGFUSE_USER_ID");
+        std::env::remove_var("ISOTOMA_EMAIL");
+    }
+
+    #[test]
+    fn user_id_falls_back_to_isotoma_email() {
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CC_LANGFUSE_USER_ID");
+        std::env::remove_var("LANGFUSE_USER_ID");
+        std::env::set_var("ISOTOMA_EMAIL", "fallback@example.com");
+        assert_eq!(
+            user_id_from_env(),
+            Some("fallback@example.com".to_string())
+        );
+        std::env::remove_var("ISOTOMA_EMAIL");
+    }
+
+    #[test]
+    fn user_id_none_when_no_vars_set() {
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CC_LANGFUSE_USER_ID");
+        std::env::remove_var("LANGFUSE_USER_ID");
+        std::env::remove_var("ISOTOMA_EMAIL");
+        assert_eq!(user_id_from_env(), None);
+    }
+
+    #[test]
+    fn user_id_ignores_empty_vars() {
+        let _guard = crate::mask::ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CC_LANGFUSE_USER_ID");
+        std::env::set_var("LANGFUSE_USER_ID", "  ");
+        std::env::remove_var("ISOTOMA_EMAIL");
+        assert_eq!(user_id_from_env(), None, "whitespace-only id must be ignored");
+
+        std::env::remove_var("LANGFUSE_USER_ID");
+        std::env::set_var("ISOTOMA_EMAIL", "   ");
+        assert_eq!(user_id_from_env(), None, "whitespace ISOTOMA_EMAIL must be ignored");
+        std::env::remove_var("ISOTOMA_EMAIL");
     }
 
     #[test]
