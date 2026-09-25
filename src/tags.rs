@@ -373,4 +373,73 @@ mod tests {
         let tags = gather_env_tags(Source::ClaudeCode, Some(&repo_path), None);
         assert!(!tags.iter().any(|t| t.starts_with("org:")));
     }
+
+    #[test]
+    fn repo_tag_from_remote_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_str().unwrap();
+        // Initialise a git repo and add an origin remote.
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["remote", "add", "origin", "git@github.com:acme/widgets.git"])
+            .current_dir(dir_path)
+            .output()
+            .unwrap();
+
+        let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
+
+        // Repo tag comes from the remote URL, not the temp-dir name.
+        assert!(
+            tags.iter().any(|t| t == "repo:widgets"),
+            "expected repo:widgets in tags: {tags:?}"
+        );
+        // Org tag should also be present.
+        assert!(
+            tags.iter().any(|t| t == "org:acme"),
+            "expected org:acme in tags: {tags:?}"
+        );
+        // Should NOT contain repo:<temp-dir-name>.
+        let dir_basename = std::path::Path::new(dir_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            !tags.iter().any(|t| *t == format!("repo:{dir_basename}")),
+            "should not contain repo:{dir_basename} in tags: {tags:?}"
+        );
+    }
+
+    #[test]
+    fn repo_tag_falls_back_to_toplevel_without_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_str().unwrap();
+        // Initialise a git repo with no remote.
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir_path)
+            .output()
+            .unwrap();
+
+        let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
+
+        let dir_basename = std::path::Path::new(dir_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            tags.iter().any(|t| *t == format!("repo:{dir_basename}")),
+            "expected repo:{dir_basename} in tags: {tags:?}"
+        );
+        // No org tag should be present without a remote.
+        assert!(
+            !tags.iter().any(|t| t.starts_with("org:")),
+            "should not contain any org: tag in tags: {tags:?}"
+        );
+    }
 }
