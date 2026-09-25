@@ -70,6 +70,38 @@ fn org_from_remote_url(url: &str) -> Option<String> {
     }
 }
 
+/// Extract the repository name from a git remote URL.
+///
+/// Handles SCP-style (`git@github.com:org/repo.git`),
+/// ssh:// (`ssh://git@github.com/org/repo.git`),
+/// and https:// (`https://github.com/org/repo.git`) forms.
+/// Returns `None` for local paths or unparseable URLs.
+fn repo_from_remote_url(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches(".git");
+
+    let path = match url.split_once("://") {
+        Some((_, rest)) => {
+            let after_host = rest.split_once('/').map(|(_, h)| h).unwrap_or(rest);
+            after_host
+        }
+        None => match url.split_once(':') {
+            Some((_, rest)) => rest,
+            None => return None,
+        },
+    };
+
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    let repo = segments[segments.len() - 1];
+    if repo.is_empty() {
+        None
+    } else {
+        Some(repo.to_string())
+    }
+}
+
 pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<&str>) -> Vec<String> {
     let mut tags = vec![source.agent_tag().to_string()];
 
