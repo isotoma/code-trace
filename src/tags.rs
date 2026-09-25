@@ -378,19 +378,14 @@ mod tests {
     fn repo_tag_from_remote_when_present() {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
-        // Initialise a git repo and add an origin remote.
-        let output = Command::new("git")
-            .args(["init"])
-            .current_dir(dir_path)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let output = Command::new("git")
+        assert!(git_cmd(&["init"], Some(dir_path)).is_some());
+        // `git remote add` produces no stdout, so check exit status directly.
+        let status = Command::new("git")
             .args(["remote", "add", "origin", "git@github.com:acme/widgets.git"])
             .current_dir(dir_path)
-            .output()
+            .status()
             .unwrap();
-        assert!(output.status.success());
+        assert!(status.success());
 
         let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
 
@@ -421,12 +416,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
         // Initialise a git repo with no remote.
-        let output = Command::new("git")
-            .args(["init"])
-            .current_dir(dir_path)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
+        assert!(git_cmd(&["init"], Some(dir_path)).is_some());
 
         let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
 
