@@ -114,27 +114,24 @@ pub fn gather_env_tags(source: Source, cwd: Option<&str>, agent_version: Option<
     // Git repo name and organisation from the origin remote URL.
     // Falls back to the show-toplevel basename for repo when no origin
     // remote exists or the URL is unparseable (e.g. local path).
+    let mut push_repo_from_toplevel = || {
+        if let Some(toplevel) = git_cmd(&["rev-parse", "--show-toplevel"], cwd) {
+            if let Some(name) = std::path::Path::new(&toplevel).file_name() {
+                tags.push(format!("repo:{}", name.to_string_lossy()));
+            }
+        }
+    };
     if let Some(url) = git_cmd(&["remote", "get-url", "origin"], cwd) {
         match repo_from_remote_url(&url) {
             Some(repo) => tags.push(format!("repo:{repo}")),
-            None => {
-                if let Some(toplevel) = git_cmd(&["rev-parse", "--show-toplevel"], cwd) {
-                    if let Some(name) = std::path::Path::new(&toplevel).file_name() {
-                        tags.push(format!("repo:{}", name.to_string_lossy()));
-                    }
-                }
-            }
+            None => push_repo_from_toplevel(),
         }
         if let Some(org) = org_from_remote_url(&url) {
             tags.push(format!("org:{org}"));
         }
     } else {
         // No origin remote: fall back to show-toplevel basename for repo.
-        if let Some(toplevel) = git_cmd(&["rev-parse", "--show-toplevel"], cwd) {
-            if let Some(name) = std::path::Path::new(&toplevel).file_name() {
-                tags.push(format!("repo:{}", name.to_string_lossy()));
-            }
-        }
+        push_repo_from_toplevel();
     }
 
     // Git branch
