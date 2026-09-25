@@ -379,16 +379,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
         // Initialise a git repo and add an origin remote.
-        Command::new("git")
+        let output = Command::new("git")
             .args(["init"])
             .current_dir(dir_path)
             .output()
             .unwrap();
-        Command::new("git")
+        assert!(output.status.success());
+        let output = Command::new("git")
             .args(["remote", "add", "origin", "git@github.com:acme/widgets.git"])
             .current_dir(dir_path)
             .output()
             .unwrap();
+        assert!(output.status.success());
 
         let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
 
@@ -419,11 +421,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
         // Initialise a git repo with no remote.
-        Command::new("git")
+        let output = Command::new("git")
             .args(["init"])
             .current_dir(dir_path)
             .output()
             .unwrap();
+        assert!(output.status.success());
 
         let tags = gather_env_tags(Source::Opencode, Some(dir_path), None);
 
