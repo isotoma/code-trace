@@ -288,6 +288,51 @@ mod tests {
     }
 
     #[test]
+    fn repo_from_ssh_url() {
+        assert_eq!(
+            repo_from_remote_url("git@github.com:acme/widgets.git"),
+            Some("widgets".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_from_https_url() {
+        assert_eq!(
+            repo_from_remote_url("https://github.com/acme/widgets.git"),
+            Some("widgets".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_from_ssh_protocol_url() {
+        assert_eq!(
+            repo_from_remote_url("ssh://git@github.com/acme/widgets.git"),
+            Some("widgets".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_from_https_url_without_git_suffix() {
+        assert_eq!(
+            repo_from_remote_url("https://github.com/acme/widgets"),
+            Some("widgets".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_from_gitlab_subgroup_url() {
+        assert_eq!(
+            repo_from_remote_url("git@gitlab.com:acme/platform/widgets.git"),
+            Some("widgets".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_from_local_path_returns_none() {
+        assert_eq!(repo_from_remote_url("/home/doug/projects/widgets"), None);
+    }
+
+    #[test]
     fn org_tag_emitted_when_remote_present() {
         let repo = tempfile::TempDir::new().unwrap();
         let repo_path = repo.path().to_string_lossy().to_string();
