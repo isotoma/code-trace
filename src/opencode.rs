@@ -7,6 +7,14 @@ pub fn normalize_opencode_messages(messages: Vec<Value>) -> Vec<Value> {
     let mut pending_assistant_idx: Option<usize> = None;
 
     for msg in messages {
+        // opencode v2's plugin sends flat messages ({type, text/content,
+        // model, tokens}); v1 sent {info, parts}. Both normalize to the same
+        // Claude-format rows.
+        if is_v2_flat(&msg) {
+            normalize_v2_message(msg, &mut result);
+            continue;
+        }
+
         let role = get_opencode_role(&msg);
         let parts = get_opencode_parts(&msg);
 
@@ -197,12 +205,138 @@ fn get_opencode_parts(msg: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Pull token usage out of an OpenCode assistant info block and translate it
+/// opencode v2 flat message: role at the top level (`type`), no `info`/`parts`
+/// wrapper. The v1 shape always has `info`; the normalized output rows are
+/// never fed back through this function.
+fn is_v2_flat(msg: &Value) -> bool {
+    (msg.get("info").is_none() && msg.get("parts").is_none())
+        && matches!(
+            msg.get("type").and_then(|v| v.as_str()),
+            Some("user") | Some("assistant")
+        )
+}
+
+/// Normalize one opencode v2 flat message. User messages carry `text`;
+/// assistant messages carry `content` items (`text`, `tool`, `reasoning`),
+/// with each tool's result inside the tool item's `state` (`content` when
+/// completed, `error` when failed). Emits the same Claude-format rows as the
+/// v1 path: a user row, an assistant row, and — when the assistant called
+/// tools — a user tool_result row so turns::build_turns attaches the outputs
+/// to the pending turn. Anything else (synthetic, system, shell, skill,
+/// compaction rows) is not part of a turn and is skipped.
+fn normalize_v2_message(msg: Value, result: &mut Vec<Value>) {
+    let msg_type = msg.get("type").and_then(|v| v.as_str());
+    match msg_type {
+        Some("user") => {
+            let text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            if text.is_empty() {
+                return;
+            }
+            result.push(json!({
+                "type": "user",
+                "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+            }));
+        }
+        Some("assistant") => {
+            let id = msg
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            // v2 model ref: {id, providerID, variant}
+            let model = msg
+                .get("model")
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("opencode");
+
+            let mut content_parts: Vec<Value> = Vec::new();
+            let mut tool_results: Vec<Value> = Vec::new();
+            let items = msg
+                .get("content")
+                .and_then(|v| v.as_array())
+                .map(|a| a.as_slice())
+                .unwrap_or(&[]);
+            for item in items {
+                let item_type = item.get("type").and_then(|v| v.as_str());
+                match item_type {
+                    Some("text") => {
+                        let text = item.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        content_parts.push(json!({ "type": "text", "text": text }));
+                    }
+                    Some("tool") => {
+                        let tool_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let tool_name = item.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let input = item
+                            .get("state")
+                            .and_then(|s| s.get("input"))
+                            .cloned()
+                            .unwrap_or(json!({}));
+                        content_parts.push(json!({
+                            "type": "tool_use",
+                            "id": tool_id,
+                            "name": tool_name,
+                            "input": input,
+                        }));
+                        // v2 carries the result inside the tool item's state.
+                        if let Some(state) = item.get("state") {
+                            let status = state.get("status").and_then(|v| v.as_str());
+                            let content = match status {
+                                Some("completed") => state.get("content").cloned(),
+                                Some("error") => state
+                                    .get("error")
+                                    .cloned()
+                                    .or_else(|| state.get("content").cloned()),
+                                _ => None, // pending/running: nothing exported yet
+                            };
+                            if let Some(content) = content {
+                                tool_results.push(json!({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": content,
+                                }));
+                            }
+                        }
+                    }
+                    _ => {} // reasoning and future item types: nothing to emit
+                }
+            }
+
+            // v2 carries token usage at the top level (`tokens`); the legacy
+            // extractor already reads `<info>.tokens`, so pass the message.
+            let usage = extract_opencode_usage(&msg);
+            let mut message = serde_json::Map::new();
+            message.insert("id".to_string(), json!(id));
+            message.insert("role".to_string(), json!("assistant"));
+            message.insert("model".to_string(), json!(model));
+            message.insert("content".to_string(), json!(content_parts));
+            if let Some(u) = usage {
+                message.insert("usage".to_string(), u);
+            }
+            result.push(json!({
+                "type": "assistant",
+                "message": Value::Object(message),
+            }));
+
+            if !tool_results.is_empty() {
+                result.push(json!({
+                    "type": "user",
+                    "message": { "role": "user", "content": tool_results },
+                }));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Pull token usage out of an OpenCode assistant message and translate it
 /// to the `message.usage` shape `transcript::get_usage` consumes. Returns
 /// None when no tokens block is present, so emit.rs omits usageDetails
 /// rather than pricing the generation at $0.
 ///
-/// Handles both v2 (`info.tokens`) and v1 (`info.metadata.assistant.tokens`).
+/// Handles the flat opencode v2 message (`tokens` at the top level, passed
+/// as the whole message), the intermediate shape (`info.tokens`), and v1
+/// (`info.metadata.assistant.tokens`).
 fn extract_opencode_usage(info: &Value) -> Option<Value> {
     let tokens = info
         .get("tokens")
@@ -368,5 +502,176 @@ mod tests {
         assert_eq!(tool_results.len(), 1);
         assert_eq!(tool_results[0]["tool_use_id"], "tu1");
         assert_eq!(tool_results[0]["content"], "file1.txt");
+    }
+
+    // --- opencode v2 flat messages ({type, text/content, model, tokens}) ---
+
+    #[test]
+    fn v2_normalizes_user_message_text() {
+        let msgs = vec![json!({
+            "id": "msg1", "type": "user", "text": "Hello",
+            "time": { "created": 1 }
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0]["type"], "user");
+        assert_eq!(normalized[0]["message"]["role"], "user");
+        assert_eq!(normalized[0]["message"]["content"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn v2_skips_empty_user_message() {
+        let msgs = vec![json!({ "id": "msg1", "type": "user", "text": "" })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert!(normalized.is_empty());
+    }
+
+    #[test]
+    fn v2_normalizes_assistant_text_and_model() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude-opus-4-1", "providerID": "anthropic" },
+            "content": [{ "type": "text", "text": "hi" }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0]["type"], "assistant");
+        assert_eq!(normalized[0]["message"]["model"], "claude-opus-4-1");
+        assert_eq!(normalized[0]["message"]["content"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn v2_skips_reasoning_items() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude" },
+            "content": [
+                { "type": "reasoning", "text": "thinking..." },
+                { "type": "text", "text": "hi" }
+            ]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        let content = normalized[0]["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+    }
+
+    #[test]
+    fn v2_tool_item_becomes_tool_use_and_result_row() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude" },
+            "content": [
+                { "type": "text", "text": "Let me check" },
+                {
+                    "type": "tool", "id": "toolu_1", "name": "read",
+                    "state": {
+                        "status": "completed",
+                        "input": { "path": "/tmp/x" },
+                        "content": [{ "type": "text", "text": "file contents" }]
+                    }
+                }
+            ]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 2);
+
+        let assistant = &normalized[0];
+        let content = assistant["message"]["content"].as_array().unwrap();
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "toolu_1");
+        assert_eq!(content[1]["name"], "read");
+        assert_eq!(content[1]["input"]["path"], "/tmp/x");
+
+        // The result rides in a user tool_result row after the assistant.
+        let result_row = &normalized[1];
+        assert_eq!(result_row["type"], "user");
+        let tr = &result_row["message"]["content"][0];
+        assert_eq!(tr["type"], "tool_result");
+        assert_eq!(tr["tool_use_id"], "toolu_1");
+        assert_eq!(tr["content"][0]["text"], "file contents");
+    }
+
+    #[test]
+    fn v2_failed_tool_exports_error_as_result() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude" },
+            "content": [{
+                "type": "tool", "id": "toolu_1", "name": "bash",
+                "state": { "status": "error", "input": {}, "error": "boom" }
+            }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 2);
+        let tr = &normalized[1]["message"]["content"][0];
+        assert_eq!(tr["tool_use_id"], "toolu_1");
+        assert_eq!(tr["content"], "boom");
+    }
+
+    #[test]
+    fn v2_running_tool_exports_no_result_yet() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude" },
+            "content": [{
+                "type": "tool", "id": "toolu_1", "name": "bash",
+                "state": { "status": "running", "input": {} }
+            }]
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        // assistant row only, no tool_result row
+        assert_eq!(normalized.len(), 1);
+    }
+
+    #[test]
+    fn v2_extracts_top_level_tokens_into_usage() {
+        let msgs = vec![json!({
+            "id": "msg2", "type": "assistant",
+            "model": { "id": "claude" },
+            "content": [{ "type": "text", "text": "hi" }],
+            "tokens": { "input": 100, "output": 50, "reasoning": 7, "cache": { "read": 10, "write": 20 } }
+        })];
+        let normalized = normalize_opencode_messages(msgs);
+        let usage = &normalized[0]["message"]["usage"];
+        assert_eq!(usage["input_tokens"], 100);
+        assert_eq!(usage["output_tokens"], 50);
+        assert_eq!(usage["cache_read_input_tokens"], 10);
+        assert_eq!(usage["cache_creation_input_tokens"], 20);
+        assert_eq!(usage["reasoning_tokens"], 7);
+    }
+
+    #[test]
+    fn v2_non_turn_message_types_pass_through_untouched() {
+        // Like the v1 path, messages that are neither user nor assistant
+        // (system, compaction, synthetic, ...) are passed through raw;
+        // turns::build_turns ignores them.
+        let msgs = vec![
+            json!({ "id": "m1", "type": "system", "text": "system note" }),
+            json!({ "id": "m2", "type": "compaction", "summary": "summarized" }),
+        ];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["type"], "system");
+        assert_eq!(normalized[1]["type"], "compaction");
+    }
+
+    #[test]
+    fn v2_and_v1_messages_can_be_mixed() {
+        let msgs = vec![
+            json!({
+                "info": { "id": "msg1", "role": "user" },
+                "parts": [{ "type": "text", "text": "legacy" }]
+            }),
+            json!({
+                "id": "msg2", "type": "assistant",
+                "model": { "id": "claude" },
+                "content": [{ "type": "text", "text": "flat" }]
+            }),
+        ];
+        let normalized = normalize_opencode_messages(msgs);
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["message"]["content"][0]["text"], "legacy");
+        assert_eq!(normalized[1]["message"]["content"][0]["text"], "flat");
     }
 }

@@ -120,14 +120,15 @@ The install script does this automatically. If not, add to `~/.claude/settings.j
 
 #### OpenCode
 
-Copy `plugin/opencode/code-trace.ts` to your OpenCode plugins directory:
+Copy the `plugin/opencode` plugin directory into your OpenCode plugins directory (opencode v2 auto-loads plugin directories; the server part is `index.ts` and the TUI part is `tui.ts`):
 
 ```bash
 mkdir -p ~/.config/opencode/plugins/
-cp plugin/opencode/code-trace.ts ~/.config/opencode/plugins/code-trace.ts
+cp -r plugin/opencode ~/.config/opencode/plugins/code-trace
+rm -f ~/.config/opencode/plugins/code-trace.ts   # v1 single-file plugin, if present
 ```
 
-Or use the install script with `--opencode` (see above).
+Or use the install script with `--opencode` (see above), which installs the directory and removes the v1 file.
 
 #### Pi
 
@@ -214,7 +215,7 @@ How each agent surfaces that reminder to the **user** (never to the model):
   }
   ```
 
-- **OpenCode** — the plugin hooks the `session.created` event (root sessions only) and spawns `code-trace --on-start` with an OpenCode-shaped payload. The binary replies with a structured JSON `{ "codeTrace": { "level", "message" } }`, and the plugin renders it as a TUI toast (`warning` when tracing is ENABLED, `info` otherwise). Subagent (Task tool) sessions are filtered out so a delegation doesn't pop a banner. In headless `opencode run` (no TUI) the toast is a no-op.
+- **OpenCode** — the plugin (server part) hooks the `session.created` event (root sessions only) and spawns `code-trace --on-start` with an OpenCode-shaped payload, recording the session so the privacy CLI can act on it. The binary replies with a structured JSON `{ "codeTrace": { "level", "message" } }`; the plugin's TUI part renders it as a toast (`warning` when tracing is ENABLED, `info` otherwise). Subagent (Task tool) sessions are filtered out so a delegation doesn't pop a banner. In headless `opencode run` (no TUI) the toast is a no-op, but the session is still recorded.
 
 ### Purge
 
@@ -240,11 +241,11 @@ Caveats: deleting the transcript removes the session from Claude Code's `--resum
 
 ### OpenCode
 
-1. The OpenCode plugin shows the tracing reminder as a TUI toast when a root session is created (`session.created`)
+1. The OpenCode plugin's TUI part shows the tracing reminder as a toast when a root session is created (`session.created`); the server part also runs `--on-start` so the session is recorded even headless
 2. The plugin hooks into the `session.idle` event after each assistant response
 3. It fetches new messages since the last processed message (tracked per-session in `~/.local/share/code-trace/opencode_cursor.json`)
-4. Messages are assembled into turns and piped to the `code-trace` binary over stdin
-5. The binary forks — the parent returns immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
+4. Messages (opencode's flat v2 shape) are piped to the `code-trace` binary over stdin
+5. The binary normalizes them into turns and forks — the parent returns immediately, while the child sends the batch to the Langfuse API via HTTP and logs the result
 
 ### Pi
 
