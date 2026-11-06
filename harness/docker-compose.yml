@@ -39,8 +39,12 @@ services:
 
 # Optional npm credentials for the image build. NPMRC_FILE points at an ~/.npmrc
 # to route `npm install` through a private registry on restricted networks;
-# unset it (the default empty file) for environments with direct registry
+# unset it (the default, an empty file) for environments with direct registry
 # access, such as CI. Consumed as a BuildKit build secret — see harness/Dockerfile.
+# The default is a committed empty file rather than /dev/null: compose's bake
+# integration refuses to read /dev/null without an explicit fs.read allowance,
+# which broke CI ("additional privileges requested: pass
+# --allow=fs.read=/dev/null"). An empty .npmrc is equivalent for npm.
 secrets:
   npmrc:
-    file: ${NPMRC_FILE:-/dev/null}
+    file: ${NPMRC_FILE:-./npmrc.empty}

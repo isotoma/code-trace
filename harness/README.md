@@ -36,8 +36,8 @@ NPMRC_FILE="$HOME/.npmrc" docker compose -f harness/docker-compose.yml up --buil
   --exit-code-from runner --abort-on-container-exit
 ```
 
-Leave `NPMRC_FILE` unset (the default) where the registry is directly reachable,
-such as CI.
+Leave `NPMRC_FILE` unset (the default, an empty committed file — `harness/npmrc.empty`)
+where the registry is directly reachable, such as CI.
 
 ## Run scenarios without Docker
 
