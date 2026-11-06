@@ -1,6 +1,33 @@
 use code_trace::{cli, config, emit, langfuse, log, opencode, payload, pi_agent, setup, state, tags, transcript, turns};
 use std::time::Instant;
 
+/// How long a Stop hook waits for the session transcript to appear before
+/// giving up. Claude Code writes the transcript concurrently with firing
+/// Stop hooks, so the file can be missing at hook start (observed with
+/// claude-code 2.1.198); two seconds covers the write without approaching
+/// Claude Code's hook timeout.
+const TRANSCRIPT_WAIT_MS: u64 = 2000;
+
+/// Block until `path` exists or the wait budget runs out. No-op when the
+/// file is already there. Returns true when the file exists on return.
+fn wait_for_transcript(path: &std::path::Path) -> bool {
+    if path.exists() {
+        return true;
+    }
+    log::debug(&format!(
+        "transcript {} not present at hook start; waiting up to {TRANSCRIPT_WAIT_MS}ms",
+        path.display()
+    ));
+    let start = Instant::now();
+    while start.elapsed().as_millis() < TRANSCRIPT_WAIT_MS as u128 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if path.exists() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Turns to skip when a session is seen for the first time (no cursor yet):
 /// everything before the turn that fired this hook predates code-trace
 /// seeing the session — pre-install/pre-enable history is never emitted.
@@ -58,6 +85,16 @@ fn run() -> i32 {
     };
 
     let cwd = input.cwd().map(String::from);
+
+    // Claude Code fires Stop hooks concurrently with writing the session
+    // transcript: the file may not exist yet when the hook starts and can
+    // appear a few hundred milliseconds later (observed with claude-code
+    // 2.1.198 in the Track 1 harness, where config-file-mode hooks lost the
+    // race every time). Poll briefly rather than drop the turn — before the
+    // state lock, so concurrent invocations are not queued behind the wait.
+    if let Some(transcript_path) = input.transcript_path() {
+        wait_for_transcript(transcript_path);
+    }
 
     // Optional restriction (on by default): only trace sessions whose working
     // directory is inside a git repository. Early-return style — no session
@@ -321,4 +358,45 @@ fn main() {
         _ => run(),
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_for_transcript_returns_immediately_when_file_exists() {
+        let dir = std::env::temp_dir().join(format!("code-trace-wait-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        std::fs::write(&path, "x").unwrap();
+        let start = Instant::now();
+        assert!(wait_for_transcript(&path));
+        assert!(start.elapsed().as_millis() < 100, "existing file must not wait");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wait_for_transcript_picks_up_file_appearing_mid_wait() {
+        let dir = std::env::temp_dir().join(format!("code-trace-wait2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("late.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        // Simulate Claude Code writing the transcript mid-wait.
+        let p = path.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::fs::write(&p, "x").ok();
+        });
+
+        let start = Instant::now();
+        assert!(wait_for_transcript(&path));
+        // It must not have burned the whole budget — the file appeared at ~100ms.
+        assert!(
+            start.elapsed().as_millis() < TRANSCRIPT_WAIT_MS as u128,
+            "wait must end when the file appears, not after the full budget"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
