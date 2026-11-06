@@ -20,6 +20,7 @@ This project sends Claude Code and OpenCode session traces to Langfuse for obser
 - `src/tags.rs` — gathers env tags (repo, org, branch, user, host, os, agent version)
 - `src/state.rs` — persisted cursor state per session
 - `src/log.rs` — logging to `~/.local/share/code-trace/`
+- `plugin/opencode/` — opencode v2 plugin (server part `index.ts`, TUI part `tui.ts`); embedded into the binary by `src/setup.rs`
 - `plugin/pi-agent/code-trace.ts` — pi extension
 
 ## State location

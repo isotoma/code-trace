@@ -278,12 +278,32 @@ fn repo_file(rel: &str) -> String {
 fn install_opencode_writes_embedded_plugin() {
     let home = scratch("oc-install");
     assert!(setup_with_home(&home, &["--install-opencode"]).status.success());
-    let installed = home.join(".config/opencode/plugins/code-trace.ts");
+    let dir = home.join(".config/opencode/plugins/code-trace");
     assert_eq!(
-        std::fs::read_to_string(&installed).unwrap(),
-        repo_file("plugin/opencode/code-trace.ts"),
-        "installed plugin must match the repo source embedded in the binary"
+        std::fs::read_to_string(dir.join("index.ts")).unwrap(),
+        repo_file("plugin/opencode/index.ts"),
+        "installed server part must match the repo source embedded in the binary"
     );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("tui.ts")).unwrap(),
+        repo_file("plugin/opencode/tui.ts"),
+        "installed TUI part must match the repo source embedded in the binary"
+    );
+}
+
+#[test]
+fn install_opencode_removes_legacy_v1_plugin_file() {
+    // A v1-era install left the single-file plugin behind; opencode v2
+    // refuses to load it and reports the error, so setup must remove it.
+    let home = scratch("oc-install-legacy");
+    let legacy = home.join(".config/opencode/plugins/code-trace.ts");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, "// v1 plugin").unwrap();
+    assert!(setup_with_home(&home, &["--install-opencode"]).status.success());
+    assert!(!legacy.exists(), "legacy v1 plugin file must be removed");
+    assert!(home
+        .join(".config/opencode/plugins/code-trace/index.ts")
+        .exists());
 }
 
 #[test]
@@ -302,7 +322,9 @@ fn offer_opencode_skips_when_not_detected() {
     let home = scratch("oc-offer-absent");
     assert!(setup_with_home(&home, &["--offer-opencode"]).status.success());
     assert!(
-        !home.join(".config/opencode/plugins/code-trace.ts").exists(),
+        !home
+            .join(".config/opencode/plugins/code-trace/index.ts")
+            .exists(),
         "must not install when OpenCode is not detected (no prompt)"
     );
 }
@@ -316,12 +338,17 @@ fn offer_opencode_installs_when_detected_without_prompt() {
     let home = scratch("oc-offer-present");
     std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
     assert!(setup_with_home(&home, &["--offer-opencode"]).status.success());
-    let installed = home.join(".config/opencode/plugins/code-trace.ts");
-    assert!(installed.exists(), "must install when OpenCode is detected");
+    let dir = home.join(".config/opencode/plugins/code-trace");
+    assert!(dir.join("index.ts").exists(), "must install when OpenCode is detected");
     assert_eq!(
-        std::fs::read_to_string(&installed).unwrap(),
-        repo_file("plugin/opencode/code-trace.ts"),
+        std::fs::read_to_string(dir.join("index.ts")).unwrap(),
+        repo_file("plugin/opencode/index.ts"),
         "installed plugin must match the embedded source"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("tui.ts")).unwrap(),
+        repo_file("plugin/opencode/tui.ts"),
+        "installed TUI part must match the embedded source"
     );
 }
 

@@ -209,11 +209,23 @@ fn with_appended_user_id(existing: &str, email: &str) -> String {
 
 // The agent plugin/extension sources are baked into the binary, so plugin
 // install works even under `curl | bash`, where there is no local checkout to
-// copy from.
-const OPENCODE_PLUGIN: &str = include_str!("../plugin/opencode/code-trace.ts");
+// copy from. The opencode plugin is an opencode v2 plugin *directory*: the
+// server part (index.ts) plus the TUI part (tui.ts) that shows the tracing
+// banner as a toast.
+const OPENCODE_PLUGIN_SERVER: &str = include_str!("../plugin/opencode/index.ts");
+const OPENCODE_PLUGIN_TUI: &str = include_str!("../plugin/opencode/tui.ts");
 const PI_EXTENSION: &str = include_str!("../plugin/pi-agent/code-trace.ts");
 
-fn opencode_plugin_path(home: &Path) -> PathBuf {
+/// The opencode v2 plugin directory, auto-loaded by opencode at startup.
+fn opencode_plugin_dir(home: &Path) -> PathBuf {
+    home.join(".config/opencode/plugins/code-trace")
+}
+
+/// The v1 single-file plugin this installer used to write. Removed on
+/// install: opencode still loads it alongside the new directory, and the v1
+/// export shape fails on opencode v2 with "Plugin must export a default
+/// definition with an id and an effect or setup function".
+fn opencode_legacy_plugin_path(home: &Path) -> PathBuf {
     home.join(".config/opencode/plugins/code-trace.ts")
 }
 
@@ -407,6 +419,56 @@ fn install_if_detected(
     }
 }
 
+/// Install the opencode plugin directory (server + TUI parts) and remove the
+/// legacy v1 single-file plugin. Same detection/consent rules as
+/// install_if_detected; returns a process exit code (0 = success/skipped).
+fn install_opencode_plugin(force: bool, detected: bool, home: &Path) -> i32 {
+    if !force && !detected {
+        return 0;
+    }
+
+    if detected {
+        println!();
+        println!("OpenCode detected — installing the code-trace plugin.");
+        println!("  {}", opencode_plugin_dir(home).display());
+    }
+
+    let dir = opencode_plugin_dir(home);
+    let mut failed = false;
+    for (name, contents) in [
+        ("index.ts", OPENCODE_PLUGIN_SERVER),
+        ("tui.ts", OPENCODE_PLUGIN_TUI),
+    ] {
+        if let Err(msg) = install_plugin(&dir.join(name), contents) {
+            eprintln!("{msg}");
+            failed = true;
+        }
+    }
+
+    // A leftover v1 plugin file fails to load on opencode v2 and its error
+    // masks the ported plugin, so remove it even if the fresh install
+    // failed partway.
+    let legacy = opencode_legacy_plugin_path(home);
+    if legacy.is_file() {
+        match std::fs::remove_file(&legacy) {
+            Ok(()) => println!("Removed legacy OpenCode plugin {}", legacy.display()),
+            Err(e) => {
+                eprintln!("could not remove {}: {e}", legacy.display());
+                failed = true;
+            }
+        }
+    }
+
+    if !failed {
+        println!("Installed OpenCode plugin to {}", dir.display());
+    }
+    if failed {
+        1
+    } else {
+        0
+    }
+}
+
 /// `code-trace setup` entry point. `args` is everything after `setup`.
 pub fn run(args: &[String]) -> i32 {
     let mut register = false;
@@ -493,14 +555,7 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     if install_opencode || offer_opencode {
-        code |= install_if_detected(
-            install_opencode,
-            opencode_detected(&home),
-            &opencode_plugin_path(&home),
-            OPENCODE_PLUGIN,
-            "OpenCode detected — installing the code-trace plugin.",
-            "Installed OpenCode plugin to",
-        );
+        code |= install_opencode_plugin(install_opencode, opencode_detected(&home), &home);
     }
 
     if install_pi || offer_pi {
@@ -808,16 +863,22 @@ mod tests {
 
     #[test]
     fn embedded_plugin_sources_are_present() {
-        assert!(!OPENCODE_PLUGIN.is_empty());
+        assert!(!OPENCODE_PLUGIN_SERVER.is_empty());
+        assert!(!OPENCODE_PLUGIN_TUI.is_empty());
         assert!(!PI_EXTENSION.is_empty());
-        assert!(OPENCODE_PLUGIN.contains("code-trace"));
+        assert!(OPENCODE_PLUGIN_SERVER.contains("code-trace"));
+        assert!(OPENCODE_PLUGIN_TUI.contains("code-trace"));
         assert!(PI_EXTENSION.contains("code-trace"));
     }
 
     #[test]
     fn plugin_paths_are_under_home() {
         assert_eq!(
-            opencode_plugin_path(Path::new("/home/x")),
+            opencode_plugin_dir(Path::new("/home/x")),
+            Path::new("/home/x/.config/opencode/plugins/code-trace")
+        );
+        assert_eq!(
+            opencode_legacy_plugin_path(Path::new("/home/x")),
             Path::new("/home/x/.config/opencode/plugins/code-trace.ts")
         );
         assert_eq!(
@@ -845,8 +906,42 @@ mod tests {
     #[test]
     fn install_plugin_creates_parents_and_writes_contents() {
         let home = temp_home("install");
-        let target = home.join(".config/opencode/plugins/code-trace.ts");
+        let target = home.join(".config/opencode/plugins/code-trace/index.ts");
         install_plugin(&target, "hello world").unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn install_opencode_plugin_writes_both_parts_and_removes_legacy_file() {
+        let home = temp_home("install-oc");
+        // Simulate a v1-era install: the legacy single-file plugin exists.
+        let legacy = opencode_legacy_plugin_path(&home);
+        install_plugin(&legacy, "// v1 plugin").unwrap();
+        assert!(legacy.is_file());
+
+        // force = true, so detection is not required.
+        assert_eq!(install_opencode_plugin(true, false, &home), 0);
+
+        let dir = opencode_plugin_dir(&home);
+        assert!(dir.join("index.ts").is_file());
+        assert!(dir.join("tui.ts").is_file());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("index.ts")).unwrap(),
+            OPENCODE_PLUGIN_SERVER
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("tui.ts")).unwrap(),
+            OPENCODE_PLUGIN_TUI
+        );
+        // The v1 file must be gone or opencode v2 keeps reporting the load
+        // error for it.
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn install_opencode_plugin_skips_when_not_detected_and_not_forced() {
+        let home = temp_home("install-oc-skip");
+        assert_eq!(install_opencode_plugin(false, false, &home), 0);
+        assert!(!opencode_plugin_dir(&home).join("index.ts").exists());
     }
 }
